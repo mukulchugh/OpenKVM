@@ -64,8 +64,10 @@ final class PeerNetwork: ObservableObject {
             }
         }
         browser.browseResultsChangedHandler = { results, _ in
+            let selfName = Host.current().localizedName ?? ""
             let names = results.compactMap { result -> String? in
-                if case .service(let name, _, _, _) = result.endpoint {
+                if case .service(let name, _, _, _) = result.endpoint,
+                   name != selfName {
                     return name
                 }
                 return nil
@@ -103,7 +105,7 @@ final class PeerNetwork: ObservableObject {
         case .connectKeyboard:
             guard let address = message.deviceAddress else { break }
             do {
-                try BluetoothManager.shared.connect(address: address)
+                try await BluetoothManager.shared.connectFromPeer(address: address)
                 lastStatusMessage = "Connected keyboard from \(message.hostName ?? "peer")"
                 send(message: PeerMessage(action: .status, deviceAddress: address, hostName: config.thisMacName, token: config.pairingToken), on: connection)
             } catch {
@@ -112,7 +114,7 @@ final class PeerNetwork: ObservableObject {
         case .disconnectKeyboard:
             guard let address = message.deviceAddress else { break }
             do {
-                try BluetoothManager.shared.disconnect(address: address)
+                try await BluetoothManager.shared.releaseForHandoff(address: address)
                 send(message: PeerMessage(action: .status, deviceAddress: address, hostName: config.thisMacName, token: config.pairingToken), on: connection)
             } catch {
                 lastStatusMessage = error.localizedDescription

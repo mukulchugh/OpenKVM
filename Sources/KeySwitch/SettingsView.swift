@@ -20,6 +20,11 @@ struct SettingsView: View {
             }
 
             Section("Keyboard") {
+                if let message = bluetooth.authorizationMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
                 Picker("Device", selection: keyboardSelection) {
                     Text("Select a keyboard…").tag("")
                     ForEach(bluetooth.devices.filter(\.isKeyboard)) { device in
@@ -33,12 +38,16 @@ struct SettingsView: View {
                     }
                 }
                 if !configStore.config.keyboardAddress.isEmpty {
-                    Text(configStore.config.keyboardAddress)
+                    Text(BluetoothAddress.display(configStore.config.keyboardAddress))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Button("Refresh Bluetooth devices") {
-                    bluetooth.refresh()
+                HStack {
+                    Button("Refresh devices") { bluetooth.refresh() }
+                    Button("Test connect here") {
+                        Task { await testLocalConnect() }
+                    }
+                    .disabled(configStore.config.keyboardAddress.isEmpty)
                 }
             }
 
@@ -77,11 +86,12 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Setup checklist") {
-                Label("Pair keyboard to both Macs in System Settings → Bluetooth", systemImage: "1.circle")
-                Label("Install KeySwitch on both Macs", systemImage: "2.circle")
-                Label("Use the same pairing token on both", systemImage: "3.circle")
-                Label("Grant Bluetooth + Local Network permissions", systemImage: "4.circle")
+            Section("Magic Keyboard checklist") {
+                Label("Pair the keyboard to both Macs once in System Settings → Bluetooth", systemImage: "1.circle")
+                Label("Install KeySwitch on both Macs on the same Wi‑Fi", systemImage: "2.circle")
+                Label("Select your Magic Keyboard and set the same token on both", systemImage: "3.circle")
+                Label("Grant Bluetooth + Local Network when macOS prompts", systemImage: "4.circle")
+                Label("If switching fails, toggle the keyboard power switch off/on", systemImage: "5.circle")
             }
         }
         .formStyle(.grouped)
@@ -108,5 +118,15 @@ struct SettingsView: View {
         defer { isPinging = false }
         let ok = await PeerNetwork.shared.ping(config: configStore.config)
         pingResult = ok ? "OK — peer reachable" : "Failed — check peer IP/name and token"
+    }
+
+    private func testLocalConnect() async {
+        do {
+            try await BluetoothManager.shared.connectLocally(address: configStore.config.keyboardAddress)
+            pingResult = "Connected on this Mac"
+            bluetooth.refresh()
+        } catch {
+            pingResult = error.localizedDescription
+        }
     }
 }

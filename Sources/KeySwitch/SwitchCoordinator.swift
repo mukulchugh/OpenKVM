@@ -9,14 +9,14 @@ final class SwitchCoordinator: ObservableObject {
 
     private init() {}
 
-    func switchToPeer() async {
+    func switchToThisMac() async {
         let config = ConfigStore.shared.config
         guard ConfigStore.shared.isConfigured else {
             lastMessage = "Finish setup in Settings first."
             return
         }
 
-        let address = config.keyboardAddress
+        let address = BluetoothAddress.normalize(config.keyboardAddress)
         guard !BluetoothManager.shared.keyboardConnected(address: address) else {
             lastMessage = "Keyboard is already on this Mac."
             return
@@ -26,11 +26,10 @@ final class SwitchCoordinator: ObservableObject {
         defer { isSwitching = false }
 
         do {
-            // Ask peer to release if it holds the keyboard, then connect here.
             _ = try await PeerNetwork.shared.send(action: .disconnectKeyboard, config: config)
-            try await Task.sleep(nanoseconds: 400_000_000)
-            try BluetoothManager.shared.connect(address: address)
-            lastMessage = "Keyboard connected to \(config.thisMacName)"
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            try await BluetoothManager.shared.connectFromPeer(address: address)
+            lastMessage = "Magic Keyboard connected to \(config.thisMacName)"
             BluetoothManager.shared.refresh()
         } catch {
             lastMessage = error.localizedDescription
@@ -44,17 +43,16 @@ final class SwitchCoordinator: ObservableObject {
             return
         }
 
-        let address = config.keyboardAddress
+        let address = BluetoothAddress.normalize(config.keyboardAddress)
         isSwitching = true
         defer { isSwitching = false }
 
         do {
             if BluetoothManager.shared.keyboardConnected(address: address) {
-                try BluetoothManager.shared.disconnect(address: address)
-                try await Task.sleep(nanoseconds: 400_000_000)
+                try await BluetoothManager.shared.releaseForHandoff(address: address)
             }
             _ = try await PeerNetwork.shared.send(action: .connectKeyboard, config: config)
-            lastMessage = "Keyboard switched to \(config.peerHostName.isEmpty ? "other Mac" : config.peerHostName)"
+            lastMessage = "Magic Keyboard switched to \(config.peerHostName.isEmpty ? "other Mac" : config.peerHostName)"
             BluetoothManager.shared.refresh()
         } catch {
             lastMessage = error.localizedDescription

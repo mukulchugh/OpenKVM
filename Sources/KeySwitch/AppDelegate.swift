@@ -123,7 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func switchToHere() {
         Task {
-            await coordinator.switchToPeer()
+            await coordinator.switchToThisMac()
             buildMenu()
         }
     }

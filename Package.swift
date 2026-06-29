@@ -11,6 +11,7 @@ let package = Package(
             resources: [.process("../../Resources")],
             linkerSettings: [
                 .linkedFramework("IOBluetooth"),
+                .linkedFramework("CoreBluetooth"),
                 .linkedFramework("Cocoa"),
                 .linkedFramework("SwiftUI"),
             ]

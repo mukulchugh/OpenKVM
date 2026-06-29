@@ -20,6 +20,7 @@ final class ConfigStore: ObservableObject {
     }
 
     func save() {
+        config.keyboardAddress = BluetoothAddress.normalize(config.keyboardAddress)
         guard let data = try? JSONEncoder().encode(config) else { return }
         UserDefaults.standard.set(data, forKey: key)
     }
