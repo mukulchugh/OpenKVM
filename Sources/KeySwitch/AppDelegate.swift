@@ -16,9 +16,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateStatusIcon()
 
-        buildMenu()
         bluetooth.refresh()
         network.start(config: configStore.config)
+        buildMenu()
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
@@ -37,13 +37,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateStatusIcon() {
-        if let button = statusItem.button {
-            if #available(macOS 11.0, *) {
-                let symbol = coordinator.isSwitching ? "arrow.left.arrow.right.circle" : "keyboard"
-                button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "KeySwitch")
-            } else {
-                button.title = "⌨"
-            }
+        guard let button = statusItem.button else { return }
+        if #available(macOS 11.0, *) {
+            let symbol = coordinator.isSwitching ? "arrow.left.arrow.right.circle" : "keyboard"
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "KeySwitch")
+        } else {
+            button.title = "⌨"
         }
     }
 
@@ -51,48 +50,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
 
         let title = configStore.config.keyboardName.isEmpty ? "KeySwitch" : configStore.config.keyboardName
-        let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        header.isEnabled = false
-        menu.addItem(header)
+        menu.addItem(disabled(title))
 
-        if let status = coordinator.lastMessage ?? network.lastStatusMessage {
-            let statusItem = NSMenuItem(title: status, action: nil, keyEquivalent: "")
-            statusItem.isEnabled = false
-            menu.addItem(statusItem)
+        if coordinator.isSwitching {
+            menu.addItem(disabled("Switching…"))
+        } else if let status = coordinator.lastMessage ?? network.lastStatusMessage {
+            menu.addItem(disabled(status))
         }
 
         menu.addItem(.separator())
 
-        let peerName = configStore.config.peerHostName.isEmpty ? "Other Mac" : configStore.config.peerHostName
         let thisName = configStore.config.thisMacName
+        let connectHere = NSMenuItem(
+            title: "Connect to this Mac (\(thisName))",
+            action: #selector(switchToHere),
+            keyEquivalent: "2"
+        )
+        connectHere.target = self
+        connectHere.isEnabled = coordinator.canConnectHere && !coordinator.isSwitching
+        menu.addItem(connectHere)
 
+        let peerName = configStore.config.peerHostName.isEmpty ? "Other Mac" : configStore.config.peerHostName
         let toPeer = NSMenuItem(
-            title: "Switch keyboard to \(peerName)",
+            title: "Switch to \(peerName)",
             action: #selector(switchToPeer),
             keyEquivalent: "1"
         )
         toPeer.target = self
+        toPeer.isEnabled = coordinator.canSwitchToPeer && !coordinator.isSwitching
         menu.addItem(toPeer)
 
-        let toHere = NSMenuItem(
-            title: "Switch keyboard to \(thisName)",
-            action: #selector(switchToHere),
-            keyEquivalent: "2"
-        )
-        toHere.target = self
-        menu.addItem(toHere)
+        if !coordinator.canConnectHere {
+            menu.addItem(disabled("→ Open Settings to pick your keyboard"))
+        } else if !coordinator.canSwitchToPeer {
+            menu.addItem(disabled("→ Set peer + token to switch away"))
+        }
 
         menu.addItem(.separator())
 
-        let connected = !configStore.config.keyboardAddress.isEmpty &&
+        let connected = coordinator.canConnectHere &&
             bluetooth.keyboardConnected(address: configStore.config.keyboardAddress)
-        let connItem = NSMenuItem(
-            title: connected ? "● Connected here" : "○ Not connected here",
-            action: nil,
-            keyEquivalent: ""
-        )
-        connItem.isEnabled = false
-        menu.addItem(connItem)
+        menu.addItem(disabled(connected ? "● Connected here" : "○ Not connected here"))
 
         menu.addItem(.separator())
 
@@ -114,6 +112,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateStatusIcon()
     }
 
+    private func disabled(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+
     @objc private func switchToPeer() {
         Task {
             await coordinator.switchToOtherMac()
@@ -122,6 +126,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func switchToHere() {
+        if !coordinator.canConnectHere {
+            openSettings()
+            return
+        }
         Task {
             await coordinator.switchToThisMac()
             buildMenu()
