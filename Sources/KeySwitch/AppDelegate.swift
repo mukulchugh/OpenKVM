@@ -45,8 +45,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildMenu() {
         let menu = NSMenu()
 
-        menu.addItem(disabled("KeySwitch"))
-
         let statusText: String
         if bridge.isReceivingFromPeer {
             statusText = "Receiving keyboard from peer"
