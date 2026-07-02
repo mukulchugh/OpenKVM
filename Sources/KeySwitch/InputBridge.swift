@@ -53,6 +53,10 @@ final class InputBridge: ObservableObject {
             _ = AXIsProcessTrustedWithOptions(options)
         }
         refreshPermissions()
+        // If we now have permission (e.g. granted via System Settings), try to activate capture
+        if ConfigStore.shared.config.isKeyboardOwner && canCapture {
+            installTapIfNeeded()
+        }
     }
 
     // MARK: - Owner side (capture + forward)
@@ -65,6 +69,16 @@ final class InputBridge: ObservableObject {
             if isForwarding {
                 Task { await toggleForwarding() }
             }
+        }
+    }
+
+    /// Call this from Refresh or after user indicates permissions were granted externally.
+    /// Removes any existing tap (to clear stale state) and re-attempts creation.
+    func forceReinstallTap() {
+        removeTap()
+        refreshPermissions()
+        if ConfigStore.shared.config.isKeyboardOwner {
+            installTapIfNeeded()
         }
     }
 
@@ -90,7 +104,7 @@ final class InputBridge: ObservableObject {
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
             canCapture = false
-            lastMessage = "Can't capture keystrokes — enable KeySwitch under BOTH Accessibility and Input Monitoring in System Settings → Privacy & Security."
+            lastMessage = "Event tap creation failed. If you already granted Accessibility + Input Monitoring, quit KeySwitch completely and relaunch. Then click Refresh."
             return
         }
 

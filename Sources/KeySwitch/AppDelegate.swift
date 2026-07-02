@@ -134,7 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func refreshState() {
-        bridge.refreshPermissions()
+        bridge.forceReinstallTap()
         network.stop()
         network.start(config: configStore.config)
         buildMenu()
