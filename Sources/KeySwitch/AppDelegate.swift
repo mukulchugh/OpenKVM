@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateStatusIcon()
 
+        bridge.requestAccessibilityIfNeeded()
         bridge.updateOwnerState()
         network.start(config: configStore.config)
         buildMenu()
@@ -64,22 +65,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        if configStore.config.isKeyboardOwner {
-            if !bridge.hasAccessibility {
-                menu.addItem(disabled("→ Grant Accessibility access in Settings"))
-            } else {
-                let toggle = NSMenuItem(
-                    title: bridge.isForwarding ? "Switch keyboard back to this Mac" : "Switch keyboard to other Mac",
-                    action: #selector(toggleForwarding),
-                    keyEquivalent: "k"
-                )
-                toggle.keyEquivalentModifierMask = [.command, .shift]
-                toggle.target = self
-                toggle.isEnabled = ConfigStore.shared.isConfigured
-                menu.addItem(toggle)
-                if !ConfigStore.shared.isConfigured {
-                    menu.addItem(disabled("→ Set other Mac + token in Settings"))
-                }
+        if !bridge.hasAccessibility {
+            menu.addItem(disabled("→ Grant Accessibility access in Settings"))
+        } else if configStore.config.isKeyboardOwner {
+            let toggle = NSMenuItem(
+                title: bridge.isForwarding ? "Switch keyboard back to this Mac" : "Switch keyboard to other Mac",
+                action: #selector(toggleForwarding),
+                keyEquivalent: "k"
+            )
+            toggle.keyEquivalentModifierMask = [.command, .shift]
+            toggle.target = self
+            toggle.isEnabled = ConfigStore.shared.isConfigured
+            menu.addItem(toggle)
+            if !ConfigStore.shared.isConfigured {
+                menu.addItem(disabled("→ Pair with your other Mac in Settings"))
             }
         } else {
             menu.addItem(disabled("→ Enable “This Mac has the keyboard” on the owner Mac"))

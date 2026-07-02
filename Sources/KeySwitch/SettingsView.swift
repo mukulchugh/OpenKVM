@@ -23,9 +23,14 @@ struct SettingsView: View {
                     }
                 ))
 
-                if configStore.config.isKeyboardOwner && !bridge.hasAccessibility {
-                    Label("KeySwitch needs Accessibility access to capture keystrokes.", systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                if !bridge.hasAccessibility {
+                    Label(
+                        configStore.config.isKeyboardOwner
+                            ? "KeySwitch needs Accessibility access to capture keystrokes."
+                            : "KeySwitch needs Accessibility access to type incoming keystrokes on this Mac.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .foregroundStyle(.orange)
                     Button("Grant access…") { openAccessibilitySettings() }
                 }
 

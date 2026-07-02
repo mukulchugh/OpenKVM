@@ -21,8 +21,19 @@ final class InputBridge: ObservableObject {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var receivingResetTask: Task<Void, Never>?
+    private var promptedForAccessibility = false
 
     private init() {}
+
+    /// Both sides need Accessibility trust: the owner to capture keystrokes, the
+    /// receiver to inject them — macOS silently drops CGEvent.post from untrusted apps.
+    func requestAccessibilityIfNeeded() {
+        hasAccessibility = AXIsProcessTrusted()
+        guard !hasAccessibility, !promptedForAccessibility else { return }
+        promptedForAccessibility = true
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+    }
 
     // MARK: - Owner side (capture + forward)
 
@@ -145,6 +156,12 @@ final class InputBridge: ObservableObject {
     // MARK: - Receiver side (inject)
 
     func inject(keyCode: UInt16, keyDown: Bool, flags: UInt64, isFlagsChanged: Bool) {
+        guard AXIsProcessTrusted() else {
+            hasAccessibility = false
+            lastMessage = "Keystrokes arriving, but macOS is blocking them — grant Accessibility access to KeySwitch."
+            requestAccessibilityIfNeeded()
+            return
+        }
         guard let source = CGEventSource(stateID: .hidSystemState),
               let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: keyDown)
         else { return }
