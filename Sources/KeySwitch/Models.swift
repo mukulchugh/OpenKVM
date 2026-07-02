@@ -17,6 +17,8 @@ struct PeerMessage: Codable, Sendable {
         case status
         case querySetup
         case setupStatus
+        case pairRequest
+        case pairResponse
     }
 
     let action: Action
@@ -28,6 +30,8 @@ struct PeerMessage: Codable, Sendable {
     var keyDown: Bool?
     var flags: UInt64?
     var isFlagsChanged: Bool?
+    // pairResponse payload
+    var approved: Bool?
 }
 
 struct AppConfig: Codable, Equatable {

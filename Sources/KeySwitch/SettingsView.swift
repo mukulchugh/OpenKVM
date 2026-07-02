@@ -7,6 +7,7 @@ struct SettingsView: View {
     @ObservedObject private var bridge = InputBridge.shared
     @State private var pingResult: String?
     @State private var isPinging = false
+    @State private var isPairing = false
 
     private var peerTitle: String {
         configStore.config.peerHostName.isEmpty ? "Other Mac" : configStore.config.peerHostName
@@ -109,22 +110,33 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("Discovered on network (click to use):")
+                    Text("Discovered on network:")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     ForEach(network.discoveredPeers, id: \.self) { peer in
-                        Button(peer) {
-                            configStore.config.peerHostName = peer
+                        HStack {
+                            Button(peer) {
+                                configStore.config.peerHostName = peer
+                            }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                            Spacer()
+                            Button(isPairing ? "Pairing…" : "Pair") {
+                                Task { await pair(with: peer) }
+                            }
+                            .font(.caption)
+                            .disabled(isPairing)
                         }
-                        .buttonStyle(.link)
-                        .font(.caption)
                     }
+                    Text("“Pair” sends a one-tap approval request to that Mac and copies its token here automatically — no manual passphrase typing.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
 
             Section("Pairing") {
                 SecureField("Shared token (same on both Macs)", text: $configStore.config.pairingToken)
-                Text("Pick any passphrase and enter the same value on both Macs. Required: it authenticates every forwarded keystroke.")
+                Text("Set automatically by clicking “Pair” above. Or type the same passphrase on both Macs manually.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 HStack {
@@ -135,7 +147,7 @@ struct SettingsView: View {
                     if let pingResult {
                         Text(pingResult)
                             .font(.caption)
-                            .foregroundStyle(pingResult.hasPrefix("OK") ? .green : .orange)
+                            .foregroundStyle(pingResult.hasPrefix("OK") || pingResult.hasPrefix("Paired") ? .green : .orange)
                     }
                 }
             }
@@ -225,6 +237,20 @@ struct SettingsView: View {
     private func openAccessibilitySettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func pair(with peer: String) async {
+        isPairing = true
+        defer { isPairing = false }
+        switch await network.requestPairing(peerName: peer) {
+        case .success(let pairing):
+            configStore.config.peerHostName = peer
+            configStore.config.pairingToken = pairing.token
+            pingResult = "Paired with \(pairing.hostName)."
+            await refreshPeerSetup()
+        case .failure(let error):
+            pingResult = error.localizedDescription
         }
     }
 

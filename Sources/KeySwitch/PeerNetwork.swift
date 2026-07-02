@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Network
 
@@ -102,6 +103,11 @@ final class PeerNetwork: ObservableObject {
     private func processIncoming(_ message: PeerMessage, connection: NWConnection) async {
         let config = ConfigStore.shared.config
 
+        if message.action == .pairRequest {
+            await handlePairRequest(message, connection: connection, config: config)
+            return
+        }
+
         guard message.token == config.pairingToken, !config.pairingToken.isEmpty else {
             await sendAndClose(
                 PeerMessage(action: .status, hostName: config.thisMacName, token: nil, setupStatus: nil),
@@ -145,21 +151,18 @@ final class PeerNetwork: ObservableObject {
     }
 
     func send(action: PeerMessage.Action, config: AppConfig) async throws -> PeerMessage? {
-        let endpoint = resolvedPeerEndpoint(config: config)
-        guard endpoint != nil else { throw SwitchError.peerUnreachable }
+        guard let endpoint = resolvedPeerEndpoint(config: config) else { throw SwitchError.peerUnreachable }
+        let message = PeerMessage(action: action, hostName: config.thisMacName, token: config.pairingToken, setupStatus: nil)
+        return try await request(message, to: endpoint)
+    }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            let connection = NWConnection(to: endpoint!, using: .tcp)
+    private func request(_ message: PeerMessage, to endpoint: NWEndpoint) async throws -> PeerMessage? {
+        try await withCheckedThrowingContinuation { continuation in
+            let connection = NWConnection(to: endpoint, using: .tcp)
             var finished = false
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    let message = PeerMessage(
-                        action: action,
-                        hostName: config.thisMacName,
-                        token: config.pairingToken,
-                        setupStatus: nil
-                    )
                     PeerNetwork.shared.send(message: message, on: connection) {
                         PeerNetwork.shared.receiveMessage(on: connection) { response in
                             guard !finished else { return }
@@ -190,6 +193,66 @@ final class PeerNetwork: ObservableObject {
                 }
             }
         }
+    }
+
+    // MARK: - One-click pairing (approve-on-the-other-Mac, no manual token typing)
+
+    /// Sends a pairing request to a discovered peer by Bonjour name. The peer shows
+    /// an approval prompt; on approval it shares its pairing token (generating one
+    /// if it doesn't have one yet) so both Macs end up with the same token.
+    @MainActor
+    func requestPairing(peerName: String) async -> Result<(token: String, hostName: String), SwitchError> {
+        let endpoint = NWEndpoint.service(name: peerName, type: "_keyswitch._tcp", domain: "local.", interface: nil)
+        let message = PeerMessage(action: .pairRequest, hostName: ConfigStore.shared.config.thisMacName, token: nil, setupStatus: nil)
+        do {
+            let response = try await request(message, to: endpoint)
+            guard response?.action == .pairResponse else {
+                return .failure(.operationFailed("Unexpected response from \(peerName)."))
+            }
+            guard response?.approved == true, let token = response?.token, let hostName = response?.hostName else {
+                return .failure(.operationFailed("Pairing was declined on \(peerName)."))
+            }
+            return .success((token, hostName))
+        } catch let error as SwitchError {
+            return .failure(error)
+        } catch {
+            return .failure(.operationFailed(error.localizedDescription))
+        }
+    }
+
+    @MainActor
+    private func handlePairRequest(_ message: PeerMessage, connection: NWConnection, config: AppConfig) async {
+        let requesterName = message.hostName ?? "Another Mac"
+        let approved = await confirmPairing(with: requesterName)
+
+        var token = config.pairingToken
+        if approved && token.isEmpty {
+            token = String(UUID().uuidString.prefix(12))
+            ConfigStore.shared.config.pairingToken = token
+        }
+
+        await sendAndClose(
+            PeerMessage(
+                action: .pairResponse,
+                hostName: config.thisMacName,
+                token: approved ? token : nil,
+                setupStatus: nil,
+                approved: approved
+            ),
+            on: connection
+        )
+    }
+
+    @MainActor
+    private func confirmPairing(with requesterName: String) async -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Pair with \(requesterName)?"
+        alert.informativeText = "\(requesterName) wants to share its pairing token with this Mac so keyboard forwarding can be set up without typing a passphrase."
+        alert.addButton(withTitle: "Approve")
+        alert.addButton(withTitle: "Decline")
+        alert.alertStyle = .informational
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     // MARK: - Key event stream (owner side, persistent outbound connection)
