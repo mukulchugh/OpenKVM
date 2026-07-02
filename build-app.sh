@@ -26,7 +26,17 @@ echo "Binary architectures:"
 lipo -info "$APP_DIR/Contents/MacOS/$APP_NAME"
 
 if command -v codesign >/dev/null 2>&1; then
-    codesign --force --deep --sign - "$APP_DIR"
+    # Stable identity keeps TCC/Accessibility permission across rebuilds
+    # (ad-hoc "-" changes every build, breaking the permission each time).
+    # Create it once with: ./scripts/make-signing-cert.sh
+    if security find-identity -v -p codesigning | grep -q "KeySwitch Dev"; then
+        SIGN_ID="KeySwitch Dev"
+    else
+        SIGN_ID="-"
+        echo "NOTE: signing ad-hoc. Run ./scripts/make-signing-cert.sh once so"
+        echo "      Accessibility permission survives rebuilds."
+    fi
+    codesign --force --deep --sign "$SIGN_ID" "$APP_DIR"
     codesign --verify --deep --strict "$APP_DIR"
 fi
 
