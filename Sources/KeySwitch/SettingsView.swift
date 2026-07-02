@@ -23,18 +23,25 @@ struct SettingsView: View {
                     }
                 ))
 
-                if !bridge.hasAccessibility {
-                    Label(
-                        configStore.config.isKeyboardOwner
-                            ? "KeySwitch needs Accessibility access to capture keystrokes."
-                            : "KeySwitch needs Accessibility access to type incoming keystrokes on this Mac.",
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                    .foregroundStyle(.orange)
-                    Button("Grant access…") { openAccessibilitySettings() }
+                if configStore.config.isKeyboardOwner && !bridge.canCapture {
+                    Label("KeySwitch needs Accessibility AND Input Monitoring to capture keystrokes.", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    HStack {
+                        Button("Request access") { bridge.requestPermissions() }
+                        Button("Accessibility…") { openPrivacyPane("Privacy_Accessibility") }
+                        Button("Input Monitoring…") { openPrivacyPane("Privacy_ListenEvent") }
+                    }
+                }
+                if !configStore.config.isKeyboardOwner && !bridge.canPost {
+                    Label("KeySwitch needs permission to type incoming keystrokes on this Mac.", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    HStack {
+                        Button("Request access") { bridge.requestPermissions() }
+                        Button("Accessibility…") { openPrivacyPane("Privacy_Accessibility") }
+                    }
                 }
 
-                if configStore.config.isKeyboardOwner && bridge.hasAccessibility && isPaired {
+                if configStore.config.isKeyboardOwner && bridge.canCapture && isPaired {
                     HStack {
                         Button(bridge.isForwarding ? "Bring keyboard back here" : "Send keyboard to \(peerDisplayName)") {
                             Task { await bridge.toggleForwarding() }
@@ -114,7 +121,7 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 420, height: 380)
         .onAppear {
-            bridge.refreshAccessibilityStatus()
+            bridge.refreshPermissions()
             restartNetwork()
         }
         .onChange(of: configStore.config.thisMacName) { _ in restartNetwork() }
@@ -152,8 +159,8 @@ struct SettingsView: View {
         network.start(config: configStore.config)
     }
 
-    private func openAccessibilitySettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+    private func openPrivacyPane(_ pane: String) {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
             NSWorkspace.shared.open(url)
         }
     }

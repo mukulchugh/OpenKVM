@@ -15,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateStatusIcon()
 
-        bridge.requestAccessibilityIfNeeded()
+        bridge.requestPermissionsIfNeeded()
         bridge.updateOwnerState()
         network.start(config: configStore.config)
         buildMenu()
@@ -26,7 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.bridge.refreshAccessibilityStatus()
+                self?.bridge.refreshPermissions()
                 self?.buildMenu()
             }
         }
@@ -65,8 +65,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        if !bridge.hasAccessibility {
-            menu.addItem(disabled("→ Grant Accessibility access in Settings"))
+        let hasNeededPermission = configStore.config.isKeyboardOwner ? bridge.canCapture : bridge.canPost
+        if !hasNeededPermission {
+            menu.addItem(disabled("→ Grant permissions in Settings"))
         } else if configStore.config.isKeyboardOwner {
             let toggle = NSMenuItem(
                 title: bridge.isForwarding ? "Switch keyboard back to this Mac" : "Switch keyboard to other Mac",
@@ -133,7 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func refreshState() {
-        bridge.refreshAccessibilityStatus()
+        bridge.refreshPermissions()
         network.stop()
         network.start(config: configStore.config)
         buildMenu()

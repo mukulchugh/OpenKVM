@@ -14,25 +14,45 @@ final class InputBridge: ObservableObject {
     static let hotkeyDisplay = "⌘⇧K"
 
     @Published private(set) var isForwarding = false
-    @Published private(set) var hasAccessibility = false
+    @Published private(set) var canCapture = false // Accessibility + Input Monitoring
+    @Published private(set) var canPost = false    // synthesize events on this Mac
     @Published private(set) var isReceivingFromPeer = false
     @Published var lastMessage: String?
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var receivingResetTask: Task<Void, Never>?
-    private var promptedForAccessibility = false
+    private var promptedForPermissions = false
 
     private init() {}
 
-    /// Both sides need Accessibility trust: the owner to capture keystrokes, the
-    /// receiver to inject them — macOS silently drops CGEvent.post from untrusted apps.
-    func requestAccessibilityIfNeeded() {
-        hasAccessibility = AXIsProcessTrusted()
-        guard !hasAccessibility, !promptedForAccessibility else { return }
-        promptedForAccessibility = true
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
+    /// macOS tracks three separate TCC permissions here: Accessibility,
+    /// Input Monitoring (kTCCServiceListenEvent, needed to capture), and
+    /// PostEvent (needed to inject). AXIsProcessTrusted() only covers the first —
+    /// the CG preflight/request APIs are the correct checks for the other two.
+    func refreshPermissions() {
+        canCapture = CGPreflightListenEventAccess() && AXIsProcessTrusted()
+        canPost = CGPreflightPostEventAccess()
+    }
+
+    func requestPermissionsIfNeeded() {
+        refreshPermissions()
+        guard !promptedForPermissions else { return }
+        promptedForPermissions = true
+        requestPermissions()
+    }
+
+    func requestPermissions() {
+        refreshPermissions()
+        if !canPost {
+            _ = CGRequestPostEventAccess()
+        }
+        if !canCapture {
+            _ = CGRequestListenEventAccess()
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+        }
+        refreshPermissions()
     }
 
     // MARK: - Owner side (capture + forward)
@@ -48,12 +68,8 @@ final class InputBridge: ObservableObject {
         }
     }
 
-    func refreshAccessibilityStatus() {
-        hasAccessibility = AXIsProcessTrusted()
-    }
-
     private func installTapIfNeeded() {
-        refreshAccessibilityStatus()
+        refreshPermissions()
         guard eventTap == nil else { return }
 
         let mask: CGEventMask =
@@ -73,13 +89,13 @@ final class InputBridge: ObservableObject {
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
-            hasAccessibility = false
-            lastMessage = SwitchError.accessibilityDenied.localizedDescription
+            canCapture = false
+            lastMessage = "Can't capture keystrokes — enable KeySwitch under BOTH Accessibility and Input Monitoring in System Settings → Privacy & Security."
             return
         }
 
         eventTap = tap
-        hasAccessibility = true
+        canCapture = true
         let source = CFMachPortCreateRunLoopSource(nil, tap, 0)
         runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
@@ -156,10 +172,10 @@ final class InputBridge: ObservableObject {
     // MARK: - Receiver side (inject)
 
     func inject(keyCode: UInt16, keyDown: Bool, flags: UInt64, isFlagsChanged: Bool) {
-        guard AXIsProcessTrusted() else {
-            hasAccessibility = false
-            lastMessage = "Keystrokes arriving, but macOS is blocking them — grant Accessibility access to KeySwitch."
-            requestAccessibilityIfNeeded()
+        guard CGPreflightPostEventAccess() else {
+            canPost = false
+            lastMessage = "Keystrokes arriving, but macOS is blocking them — click Grant in Settings to allow KeySwitch to type."
+            _ = CGRequestPostEventAccess()
             return
         }
         guard let source = CGEventSource(stateID: .hidSystemState),
