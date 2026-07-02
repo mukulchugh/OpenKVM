@@ -1,60 +1,114 @@
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject private var configStore = ConfigStore.shared
-    @ObservedObject private var bluetooth = BluetoothManager.shared
     @ObservedObject private var network = PeerNetwork.shared
+    @ObservedObject private var bridge = InputBridge.shared
     @State private var pingResult: String?
     @State private var isPinging = false
 
+    private var peerTitle: String {
+        configStore.config.peerHostName.isEmpty ? "Other Mac" : configStore.config.peerHostName
+    }
+
     var body: some View {
         Form {
+            Section("This Mac — setup status") {
+                localSetupStatus
+                if let message = network.lastStatusMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                if !network.isListening {
+                    Text("Grant Local Network access if macOS prompted, then click Refresh in the menu.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("\(peerTitle) — setup status") {
+                peerSetupStatus
+                HStack {
+                    Button(network.isFetchingPeerSetup ? "Refreshing…" : "Refresh peer status") {
+                        Task { await refreshPeerSetup() }
+                    }
+                    .disabled(network.isFetchingPeerSetup || !canQueryPeer)
+                }
+            }
+
             Section("This Mac") {
-                TextField("Name", text: $configStore.config.thisMacName)
+                TextField("Bonjour name (other Mac uses this)", text: $configStore.config.thisMacName)
+                Text("Advertised on the network as “\(configStore.config.thisMacName.isEmpty ? (Host.current().localizedName ?? "KeySwitch") : configStore.config.thisMacName)”")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Stepper(value: Binding(
                     get: { Int(configStore.config.listenPort) },
                     set: { configStore.config.listenPort = UInt16($0) }
                 ), in: 1024...65535) {
                     Text("Listen port: \(configStore.config.listenPort)")
                 }
+                Text("Use the same port on both Macs.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            Section("Keyboard") {
-                if let message = bluetooth.authorizationMessage {
-                    Text(message)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-                Picker("Device", selection: keyboardSelection) {
-                    Text("Select a keyboard…").tag("")
-                    ForEach(bluetooth.devices.filter(\.isKeyboard)) { device in
-                        HStack {
-                            Text(device.name)
-                            if device.isConnected {
-                                Text("● connected").foregroundStyle(.green)
-                            }
+            Section("Keyboard sharing") {
+                Toggle("This Mac has the physical keyboard", isOn: Binding(
+                    get: { configStore.config.isKeyboardOwner },
+                    set: { newValue in
+                        configStore.config.isKeyboardOwner = newValue
+                        bridge.updateOwnerState()
+                    }
+                ))
+                Text("Turn this on only on the one Mac your keyboard is actually connected to.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if configStore.config.isKeyboardOwner {
+                    if bridge.hasAccessibility {
+                        Label("Accessibility access granted", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Label("Accessibility access needed to capture keystrokes", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Button("Open Privacy & Security Settings") { openAccessibilitySettings() }
+                    }
+
+                    HStack {
+                        Button(bridge.isForwarding ? "Switch keyboard back to this Mac" : "Switch keyboard to other Mac") {
+                            Task { await bridge.toggleForwarding() }
                         }
-                        .tag(device.address)
+                        .disabled(!bridge.hasAccessibility || !configStore.isConfigured)
+                        Text("Shortcut: \(InputBridge.hotkeyDisplay)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                }
-                if !configStore.config.keyboardAddress.isEmpty {
-                    Text(BluetoothAddress.display(configStore.config.keyboardAddress))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                HStack {
-                    Button("Refresh devices") { bluetooth.refresh() }
-                    Button("Test connect here") {
-                        Task { await testLocalConnect() }
+                    if let message = bridge.lastMessage {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    .disabled(configStore.config.keyboardAddress.isEmpty)
+                } else if bridge.isReceivingFromPeer {
+                    Label("Receiving keyboard input from peer", systemImage: "keyboard.badge.ellipsis")
+                        .foregroundStyle(.green)
                 }
             }
 
             Section("Other Mac") {
                 TextField("Peer name (Bonjour)", text: $configStore.config.peerHostName)
                 TextField("Peer IP (optional fallback)", text: $configStore.config.peerAddress)
-                if !network.discoveredPeers.isEmpty {
+                if !configStore.config.peerAddress.isEmpty {
+                    Text("IP is used first. Clear it if Bonjour discovery should be used instead.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                if network.discoveredPeers.isEmpty {
+                    Text("No peers found. KeySwitch must be running on the other Mac on the same Wi‑Fi.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
                     Text("Discovered on network (click to use):")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -70,7 +124,7 @@ struct SettingsView: View {
 
             Section("Pairing") {
                 SecureField("Shared token (same on both Macs)", text: $configStore.config.pairingToken)
-                Text("Pick any passphrase and enter the same value on both Macs.")
+                Text("Pick any passphrase and enter the same value on both Macs. Required: it authenticates every forwarded keystroke.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 HStack {
@@ -81,52 +135,104 @@ struct SettingsView: View {
                     if let pingResult {
                         Text(pingResult)
                             .font(.caption)
-                            .foregroundStyle(pingResult.contains("OK") ? .green : .orange)
+                            .foregroundStyle(pingResult.hasPrefix("OK") ? .green : .orange)
                     }
                 }
             }
 
-            Section("Magic Keyboard checklist") {
-                Label("Pair the keyboard to both Macs once in System Settings → Bluetooth", systemImage: "1.circle")
-                Label("Install KeySwitch on both Macs on the same Wi‑Fi", systemImage: "2.circle")
-                Label("Select your Magic Keyboard and set the same token on both", systemImage: "3.circle")
-                Label("Grant Bluetooth + Local Network when macOS prompts", systemImage: "4.circle")
-                Label("If switching fails, toggle the keyboard power switch off/on", systemImage: "5.circle")
+            Section("Setup checklist") {
+                Label("Install KeySwitch on both Macs on the same Wi‑Fi", systemImage: "1.circle")
+                Label("On the Mac with the physical keyboard, turn on “This Mac has the physical keyboard”", systemImage: "2.circle")
+                Label("Grant Accessibility access when macOS prompts", systemImage: "3.circle")
+                Label("Set the same pairing token and other-Mac name on both", systemImage: "4.circle")
+                Label("Press \(InputBridge.hotkeyDisplay) to switch the keyboard between Macs", systemImage: "5.circle")
             }
         }
         .formStyle(.grouped)
-        .frame(width: 460, height: 520)
+        .frame(width: 480, height: 660)
         .onAppear {
-            bluetooth.refresh()
+            bridge.refreshAccessibilityStatus()
+            restartNetwork()
+            Task { await refreshPeerSetup() }
+        }
+        .onChange(of: configStore.config.thisMacName) { _ in restartNetwork() }
+        .onChange(of: configStore.config.listenPort) { _ in restartNetwork() }
+        .onChange(of: configStore.config.peerHostName) { _ in Task { await refreshPeerSetup() } }
+        .onChange(of: configStore.config.peerAddress) { _ in Task { await refreshPeerSetup() } }
+        .onChange(of: configStore.config.pairingToken) { _ in Task { await refreshPeerSetup() } }
+    }
+
+    private var canQueryPeer: Bool {
+        !configStore.config.pairingToken.isEmpty &&
+        (!configStore.config.peerHostName.isEmpty || !configStore.config.peerAddress.isEmpty)
+    }
+
+    @ViewBuilder
+    private var localSetupStatus: some View {
+        setupRow("This Mac has the physical keyboard", ok: configStore.config.isKeyboardOwner)
+        setupRow("Pairing token set", ok: !configStore.config.pairingToken.isEmpty)
+        setupRow("Other Mac configured", ok: !configStore.config.peerHostName.isEmpty || !configStore.config.peerAddress.isEmpty)
+        setupRow("Network listening", ok: network.isListening)
+        Text("Port \(configStore.config.listenPort)")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder
+    private var peerSetupStatus: some View {
+        if !canQueryPeer {
+            Text("Set a pairing token and the other Mac's name to see its setup status.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else if let error = network.peerSetupError {
+            Text(error)
+                .font(.caption)
+                .foregroundStyle(.orange)
+        } else if let peer = network.peerSetupStatus {
+            setupRow("Reachable", ok: true)
+            setupRow("Has the physical keyboard", ok: peer.isKeyboardOwner)
+            setupRow("Pairing token set", ok: peer.tokenSet)
+            setupRow("This Mac configured on peer", ok: peer.peerConfigured)
+            setupRow("Network listening", ok: peer.networkListening)
+            Text("Port \(peer.listenPort)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else if network.isFetchingPeerSetup {
+            Text("Loading peer status…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            Text("Peer status unavailable. Click Refresh peer status.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
-    private var keyboardSelection: Binding<String> {
-        Binding(
-            get: { configStore.config.keyboardAddress },
-            set: { newValue in
-                configStore.config.keyboardAddress = newValue
-                if let device = bluetooth.devices.first(where: { $0.address == newValue }) {
-                    configStore.config.keyboardName = device.name
-                }
-            }
-        )
+    private func setupRow(_ title: String, ok: Bool) -> some View {
+        Label(title, systemImage: ok ? "checkmark.circle.fill" : "circle")
+            .foregroundStyle(ok ? .green : .secondary)
+    }
+
+    private func refreshPeerSetup() async {
+        await network.fetchPeerSetupStatus(config: configStore.config)
+    }
+
+    private func restartNetwork() {
+        network.stop()
+        network.start(config: configStore.config)
+    }
+
+    private func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     private func runPing() async {
         isPinging = true
         defer { isPinging = false }
-        let ok = await PeerNetwork.shared.ping(config: configStore.config)
-        pingResult = ok ? "OK — peer reachable" : "Failed — check peer IP/name and token"
-    }
-
-    private func testLocalConnect() async {
-        do {
-            try await BluetoothManager.shared.connectLocally(address: configStore.config.keyboardAddress)
-            pingResult = "Connected on this Mac"
-            bluetooth.refresh()
-        } catch {
-            pingResult = error.localizedDescription
-        }
+        let result = await PeerNetwork.shared.ping(config: configStore.config)
+        pingResult = result.detail
+        await refreshPeerSetup()
     }
 }

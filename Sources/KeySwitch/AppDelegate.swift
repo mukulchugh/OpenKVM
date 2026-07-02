@@ -6,9 +6,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var settingsWindow: NSWindow?
     private let configStore = ConfigStore.shared
-    private let bluetooth = BluetoothManager.shared
     private let network = PeerNetwork.shared
-    private let coordinator = SwitchCoordinator.shared
+    private let bridge = InputBridge.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -16,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateStatusIcon()
 
-        bluetooth.refresh()
+        bridge.updateOwnerState()
         network.start(config: configStore.config)
         buildMenu()
 
@@ -26,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.bluetooth.refresh()
+                self?.bridge.refreshAccessibilityStatus()
                 self?.buildMenu()
             }
         }
@@ -34,63 +33,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         network.stop()
+        Task { @MainActor in network.stopKeyForwarding() }
     }
 
     private func updateStatusIcon() {
         guard let button = statusItem.button else { return }
-        if #available(macOS 11.0, *) {
-            let symbol = coordinator.isSwitching ? "arrow.left.arrow.right.circle" : "keyboard"
-            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "KeySwitch")
-        } else {
-            button.title = "⌨"
-        }
+        let symbol = bridge.isForwarding ? "arrow.left.arrow.right.circle.fill" : "keyboard"
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "KeySwitch")
     }
 
     private func buildMenu() {
         let menu = NSMenu()
 
-        let title = configStore.config.keyboardName.isEmpty ? "KeySwitch" : configStore.config.keyboardName
-        menu.addItem(disabled(title))
+        menu.addItem(disabled("KeySwitch"))
 
-        if coordinator.isSwitching {
-            menu.addItem(disabled("Switching…"))
-        } else if let status = coordinator.lastMessage ?? network.lastStatusMessage {
-            menu.addItem(disabled(status))
+        let statusText: String
+        if bridge.isReceivingFromPeer {
+            statusText = "Receiving keyboard from peer"
+        } else if bridge.isForwarding {
+            let peer = configStore.config.peerHostName.isEmpty ? "other Mac" : configStore.config.peerHostName
+            statusText = "Forwarding keyboard to \(peer)"
+        } else if configStore.config.isKeyboardOwner {
+            statusText = "Keyboard is local"
+        } else {
+            statusText = "Receive-only Mac"
+        }
+        menu.addItem(disabled(statusText))
+
+        if let message = bridge.lastMessage ?? network.lastStatusMessage {
+            menu.addItem(disabled(message))
         }
 
         menu.addItem(.separator())
 
-        let thisName = configStore.config.thisMacName
-        let connectHere = NSMenuItem(
-            title: "Connect to this Mac (\(thisName))",
-            action: #selector(switchToHere),
-            keyEquivalent: "2"
-        )
-        connectHere.target = self
-        connectHere.isEnabled = coordinator.canConnectHere && !coordinator.isSwitching
-        menu.addItem(connectHere)
-
-        let peerName = configStore.config.peerHostName.isEmpty ? "Other Mac" : configStore.config.peerHostName
-        let toPeer = NSMenuItem(
-            title: "Switch to \(peerName)",
-            action: #selector(switchToPeer),
-            keyEquivalent: "1"
-        )
-        toPeer.target = self
-        toPeer.isEnabled = coordinator.canSwitchToPeer && !coordinator.isSwitching
-        menu.addItem(toPeer)
-
-        if !coordinator.canConnectHere {
-            menu.addItem(disabled("→ Open Settings to pick your keyboard"))
-        } else if !coordinator.canSwitchToPeer {
-            menu.addItem(disabled("→ Set peer + token to switch away"))
+        if configStore.config.isKeyboardOwner {
+            if !bridge.hasAccessibility {
+                menu.addItem(disabled("→ Grant Accessibility access in Settings"))
+            } else {
+                let toggle = NSMenuItem(
+                    title: bridge.isForwarding ? "Switch keyboard back to this Mac" : "Switch keyboard to other Mac",
+                    action: #selector(toggleForwarding),
+                    keyEquivalent: "k"
+                )
+                toggle.keyEquivalentModifierMask = [.command, .shift]
+                toggle.target = self
+                toggle.isEnabled = ConfigStore.shared.isConfigured
+                menu.addItem(toggle)
+                if !ConfigStore.shared.isConfigured {
+                    menu.addItem(disabled("→ Set other Mac + token in Settings"))
+                }
+            }
+        } else {
+            menu.addItem(disabled("→ Enable “This Mac has the keyboard” on the owner Mac"))
         }
-
-        menu.addItem(.separator())
-
-        let connected = coordinator.canConnectHere &&
-            bluetooth.keyboardConnected(address: configStore.config.keyboardAddress)
-        menu.addItem(disabled(connected ? "● Connected here" : "○ Not connected here"))
 
         menu.addItem(.separator())
 
@@ -118,20 +113,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
-    @objc private func switchToPeer() {
+    @objc private func toggleForwarding() {
         Task {
-            await coordinator.switchToOtherMac()
-            buildMenu()
-        }
-    }
-
-    @objc private func switchToHere() {
-        if !coordinator.canConnectHere {
-            openSettings()
-            return
-        }
-        Task {
-            await coordinator.switchToThisMac()
+            await bridge.toggleForwarding()
             buildMenu()
         }
     }
@@ -143,7 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let window = NSWindow(contentViewController: controller)
             window.title = "KeySwitch Settings"
             window.styleMask = [.titled, .closable, .miniaturizable]
-            window.setContentSize(NSSize(width: 480, height: 540))
+            window.setContentSize(NSSize(width: 500, height: 640))
             window.center()
             settingsWindow = window
         }
@@ -152,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func refreshState() {
-        bluetooth.refresh()
+        bridge.refreshAccessibilityStatus()
         network.stop()
         network.start(config: configStore.config)
         buildMenu()

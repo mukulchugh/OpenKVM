@@ -16,7 +16,44 @@ macOS menu bar app to switch a Bluetooth keyboard between two Macs with one clic
 
 Output: `dist/KeySwitch.app`
 
+### DMG installer
+
+```bash
+chmod +x build-dmg.sh
+./build-dmg.sh
+```
+
+Output:
+- `dist/KeySwitch.zip` — **use this on your other Mac** (avoids false "damaged" errors)
+- `dist/KeySwitch.dmg` — drag-to-Applications installer
+
 ## Install
+
+### Other Mac says DMG is "damaged"?
+
+macOS shows that for unsigned apps — the file is not actually corrupted. Use the ZIP instead:
+
+```bash
+# On the other Mac, after copying KeySwitch.zip over:
+unzip KeySwitch.zip
+chmod +x install-on-mac.sh
+./install-on-mac.sh
+```
+
+Then right-click **KeySwitch → Open** in Applications (first launch only).
+
+If you still want the DMG:
+
+```bash
+xattr -cr ~/Downloads/KeySwitch.dmg
+open ~/Downloads/KeySwitch.dmg
+```
+
+### From DMG (this Mac)
+
+Open `dist/KeySwitch.dmg`, drag KeySwitch to Applications.
+
+### From app bundle
 
 ```bash
 cp -R dist/KeySwitch.app /Applications/

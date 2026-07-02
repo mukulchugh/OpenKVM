@@ -10,8 +10,7 @@ let package = Package(
             path: "Sources/KeySwitch",
             resources: [.process("../../Resources")],
             linkerSettings: [
-                .linkedFramework("IOBluetooth"),
-                .linkedFramework("CoreBluetooth"),
+                .linkedFramework("ApplicationServices"),
                 .linkedFramework("Cocoa"),
                 .linkedFramework("SwiftUI"),
             ]
