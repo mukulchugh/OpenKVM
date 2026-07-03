@@ -32,8 +32,11 @@ final class PeerNetwork: ObservableObject {
     nonisolated(unsafe) private var pendingScrollDY: Int64 = 0
     nonisolated(unsafe) private var hasPendingMove = false
     nonisolated(unsafe) private var hasPendingScroll = false
-    nonisolated(unsafe) private var moveFlushTimer: DispatchSourceTimer?
-    private static let flushIntervalMs = 8 // ~125Hz steady output
+    nonisolated(unsafe) private var nextFlushDeadline: DispatchTime = .now()
+    nonisolated(unsafe) private var trailingArmed = false
+    // Leading-edge throttle: the first move after idle sends instantly (native
+    // latency); rapid follow-ups within this window coalesce into one packet.
+    private static let flushIntervalMs = 5
 
     private init() {}
 
@@ -421,10 +424,12 @@ final class PeerNetwork: ObservableObject {
         case "move":
             queue.async { [self] in
                 pendingDX += m.dx; pendingDY += m.dy; hasPendingMove = true
+                schedulePumpOnQueue()
             }
         case "scroll":
             queue.async { [self] in
                 pendingScrollDX += m.scrollDX; pendingScrollDY += m.scrollDY; hasPendingScroll = true
+                schedulePumpOnQueue()
             }
         default: // buttons: flush pending move/scroll for ordering, then send now
             queue.async { [self] in
@@ -433,6 +438,24 @@ final class PeerNetwork: ObservableObject {
                 message.mouseKind = m.kind
                 message.button = m.button
                 emitOnQueue(message)
+            }
+        }
+    }
+
+    /// Leading-edge throttle. MUST run on `queue`. If we're past the window, flush
+    /// immediately (first move after idle = native latency). Otherwise arm a single
+    /// trailing flush at the window boundary so continuous motion stays smooth.
+    private func schedulePumpOnQueue() {
+        let now = DispatchTime.now()
+        if now >= nextFlushDeadline {
+            flushPendingOnQueue()
+            nextFlushDeadline = now + .milliseconds(Self.flushIntervalMs)
+        } else if !trailingArmed {
+            trailingArmed = true
+            queue.asyncAfter(deadline: nextFlushDeadline) { [self] in
+                trailingArmed = false
+                flushPendingOnQueue()
+                nextFlushDeadline = DispatchTime.now() + .milliseconds(Self.flushIntervalMs)
             }
         }
     }
@@ -466,22 +489,15 @@ final class PeerNetwork: ObservableObject {
     }
 
     private func startMoveFlush() {
-        stopMoveFlush()
         queue.async { [self] in
             pendingDX = 0; pendingDY = 0; hasPendingMove = false
             pendingScrollDX = 0; pendingScrollDY = 0; hasPendingScroll = false
+            trailingArmed = false
+            nextFlushDeadline = .now()
         }
-        let t = DispatchSource.makeTimerSource(queue: queue)
-        let ms = Self.flushIntervalMs
-        t.schedule(deadline: .now() + .milliseconds(ms), repeating: .milliseconds(ms), leeway: .milliseconds(1))
-        t.setEventHandler { [weak self] in self?.flushPendingOnQueue() }
-        moveFlushTimer = t
-        t.resume()
     }
 
     private func stopMoveFlush() {
-        moveFlushTimer?.cancel()
-        moveFlushTimer = nil
         queue.async { [self] in flushPendingOnQueue() }
     }
 
