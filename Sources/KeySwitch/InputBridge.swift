@@ -44,6 +44,8 @@ final class InputBridge: ObservableObject {
     func refreshPermissions() {
         canCapture = CGPreflightListenEventAccess() && AXIsProcessTrusted()
         canPost = CGPreflightPostEventAccess()
+        canPostCached = canPost
+        refreshDisplayBounds()
     }
 
     func requestPermissionsIfNeeded() {
@@ -262,39 +264,31 @@ final class InputBridge: ObservableObject {
     }
 
     // MARK: - Receiver side (inject)
+    //
+    // These run on PeerNetwork's serial network queue (NOT the main actor), so
+    // injection timing stays even — a per-event main-actor hop was the main
+    // source of pointer jitter. All state below is touched only from that queue.
 
-    func inject(keyCode: UInt16, keyDown: Bool, flags: UInt64, isFlagsChanged: Bool) {
-        guard CGPreflightPostEventAccess() else {
-            canPost = false
-            lastMessage = "Keystrokes arriving, but macOS is blocking them — click Grant in Settings to allow KeySwitch to type."
-            _ = CGRequestPostEventAccess()
-            return
-        }
-        guard let source = CGEventSource(stateID: .hidSystemState),
-              let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: keyDown)
-        else { return }
+    nonisolated(unsafe) private var injectedCursor: CGPoint?
+    nonisolated(unsafe) private var leftDown = false
+    nonisolated(unsafe) private var rightDown = false
+    nonisolated(unsafe) private var otherDown = false
+    nonisolated(unsafe) private var canPostCached = false
+    nonisolated(unsafe) private var cachedDisplayBounds = CGRect.null
+    nonisolated(unsafe) private var receivingActive = false
+    nonisolated(unsafe) private let injectSource = CGEventSource(stateID: .hidSystemState)
+
+    nonisolated func inject(keyCode: UInt16, keyDown: Bool, flags: UInt64, isFlagsChanged: Bool) {
+        guard ensureCanPost() else { return }
+        guard let event = CGEvent(keyboardEventSource: injectSource, virtualKey: keyCode, keyDown: keyDown) else { return }
         if isFlagsChanged { event.type = .flagsChanged }
         event.flags = CGEventFlags(rawValue: flags)
         event.post(tap: .cghidEventTap)
         markReceiving()
     }
 
-    // Cursor position and button state tracked on the receiver, since incoming
-    // movement is relative and buttons determine whether a move is a drag.
-    private var injectedCursor: CGPoint?
-    private var leftDown = false
-    private var rightDown = false
-    private var otherDown = false
-
-    func injectMouse(_ m: MousePayload) {
-        guard CGPreflightPostEventAccess() else {
-            canPost = false
-            lastMessage = "Mouse input arriving, but macOS is blocking it — click Grant in Settings to allow KeySwitch to control the pointer."
-            _ = CGRequestPostEventAccess()
-            return
-        }
-        let source = CGEventSource(stateID: .hidSystemState)
-
+    nonisolated func injectMouse(_ m: MousePayload) {
+        guard ensureCanPost() else { return }
         switch m.kind {
         case "move":
             var p = injectedCursor ?? currentCursor()
@@ -304,19 +298,19 @@ final class InputBridge: ObservableObject {
             injectedCursor = p
             let moveType: CGEventType = leftDown ? .leftMouseDragged : (rightDown ? .rightMouseDragged : (otherDown ? .otherMouseDragged : .mouseMoved))
             let btn: CGMouseButton = leftDown ? .left : (rightDown ? .right : .center)
-            if let e = CGEvent(mouseEventSource: source, mouseType: moveType, mouseCursorPosition: p, mouseButton: btn) {
+            if let e = CGEvent(mouseEventSource: injectSource, mouseType: moveType, mouseCursorPosition: p, mouseButton: btn) {
                 e.setIntegerValueField(.mouseEventDeltaX, value: Int64(m.dx))
                 e.setIntegerValueField(.mouseEventDeltaY, value: Int64(m.dy))
                 e.post(tap: .cghidEventTap)
             }
-        case "leftDown":  leftDown = true;  postButton(source, .leftMouseDown, .left)
-        case "leftUp":    leftDown = false; postButton(source, .leftMouseUp, .left)
-        case "rightDown": rightDown = true;  postButton(source, .rightMouseDown, .right)
-        case "rightUp":   rightDown = false; postButton(source, .rightMouseUp, .right)
-        case "otherDown": otherDown = true;  postButton(source, .otherMouseDown, CGMouseButton(rawValue: UInt32(m.button)) ?? .center)
-        case "otherUp":   otherDown = false; postButton(source, .otherMouseUp, CGMouseButton(rawValue: UInt32(m.button)) ?? .center)
+        case "leftDown":  leftDown = true;  postButton(.leftMouseDown, .left)
+        case "leftUp":    leftDown = false; postButton(.leftMouseUp, .left)
+        case "rightDown": rightDown = true;  postButton(.rightMouseDown, .right)
+        case "rightUp":   rightDown = false; postButton(.rightMouseUp, .right)
+        case "otherDown": otherDown = true;  postButton(.otherMouseDown, CGMouseButton(rawValue: UInt32(m.button)) ?? .center)
+        case "otherUp":   otherDown = false; postButton(.otherMouseUp, CGMouseButton(rawValue: UInt32(m.button)) ?? .center)
         case "scroll":
-            if let e = CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: Int32(m.scrollDY), wheel2: Int32(m.scrollDX), wheel3: 0) {
+            if let e = CGEvent(scrollWheelEvent2Source: injectSource, units: .pixel, wheelCount: 2, wheel1: Int32(m.scrollDY), wheel2: Int32(m.scrollDX), wheel3: 0) {
                 e.post(tap: .cghidEventTap)
             }
         default:
@@ -325,40 +319,71 @@ final class InputBridge: ObservableObject {
         markReceiving()
     }
 
-    private func postButton(_ source: CGEventSource?, _ type: CGEventType, _ button: CGMouseButton) {
+    /// Cached permission check — CGPreflightPostEventAccess() per event is a
+    /// syscall 100+ times/sec and itself causes jitter. Verify once; refreshPermissions
+    /// re-syncs the cache.
+    nonisolated private func ensureCanPost() -> Bool {
+        if canPostCached { return true }
+        guard CGPreflightPostEventAccess() else {
+            Task { @MainActor in
+                self.canPost = false
+                self.lastMessage = "Input arriving, but macOS is blocking it — click Grant in Settings."
+                _ = CGRequestPostEventAccess()
+            }
+            return false
+        }
+        canPostCached = true
+        return true
+    }
+
+    nonisolated private func postButton(_ type: CGEventType, _ button: CGMouseButton) {
         let p = injectedCursor ?? currentCursor()
         injectedCursor = p
-        if let e = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: button) {
+        if let e = CGEvent(mouseEventSource: injectSource, mouseType: type, mouseCursorPosition: p, mouseButton: button) {
             e.post(tap: .cghidEventTap)
         }
     }
 
-    private func currentCursor() -> CGPoint {
+    nonisolated private func currentCursor() -> CGPoint {
         CGEvent(source: nil)?.location ?? .zero
     }
 
-    private func clampToDisplays(_ p: CGPoint) -> CGPoint {
+    nonisolated private func clampToDisplays(_ p: CGPoint) -> CGPoint {
+        let b = cachedDisplayBounds
+        guard !b.isNull else { return p }
+        return CGPoint(
+            x: min(max(p.x, b.minX), b.maxX - 1),
+            y: min(max(p.y, b.minY), b.maxY - 1)
+        )
+    }
+
+    /// Cache the union of display bounds so the hot inject path doesn't call
+    /// CGGetActiveDisplayList per event.
+    nonisolated private func refreshDisplayBounds() {
         var count: UInt32 = 0
         CGGetActiveDisplayList(0, nil, &count)
-        guard count > 0 else { return p }
+        guard count > 0 else { return }
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
         CGGetActiveDisplayList(count, &ids, &count)
         var bounds = CGRect.null
         for id in ids { bounds = bounds.union(CGDisplayBounds(id)) }
-        guard !bounds.isNull else { return p }
-        return CGPoint(
-            x: min(max(p.x, bounds.minX), bounds.maxX - 1),
-            y: min(max(p.y, bounds.minY), bounds.maxY - 1)
-        )
+        cachedDisplayBounds = bounds
     }
 
-    private func markReceiving() {
-        isReceivingFromPeer = true
-        receivingResetTask?.cancel()
-        receivingResetTask = Task {
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            guard !Task.isCancelled else { return }
-            isReceivingFromPeer = false
+    /// Flip the "receiving" UI flag at most about once per 1.5s of activity,
+    /// not once per event — the per-event main-actor hop caused jitter.
+    nonisolated private func markReceiving() {
+        if receivingActive { return }
+        receivingActive = true
+        Task { @MainActor in
+            self.isReceivingFromPeer = true
+            self.receivingResetTask?.cancel()
+            self.receivingResetTask = Task {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                guard !Task.isCancelled else { return }
+                self.isReceivingFromPeer = false
+                self.receivingActive = false
+            }
         }
     }
 }

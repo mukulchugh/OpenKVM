@@ -23,6 +23,7 @@ final class PeerNetwork: ObservableObject {
     nonisolated(unsafe) private var outboundStream: NWConnection?
     nonisolated(unsafe) private var fwdToken = ""
     nonisolated(unsafe) private var fwdHost = ""
+    nonisolated(unsafe) private var localToken = "" // this Mac's token, for authing incoming hot events
 
     private init() {}
 
@@ -39,6 +40,7 @@ final class PeerNetwork: ObservableObject {
     @MainActor
     func start(config: AppConfig) {
         stop()
+        localToken = config.pairingToken
         startListener(port: config.listenPort, serviceName: config.thisMacName)
         startBrowser(excludingName: config.thisMacName)
     }
@@ -110,9 +112,36 @@ final class PeerNetwork: ObservableObject {
 
     private func receiveNext(on connection: NWConnection) {
         receiveMessage(on: connection) { message in
-            Task { @MainActor in
-                await PeerNetwork.shared.processIncoming(message, connection: connection)
+            // Hot input injects synchronously on this network queue — no MainActor
+            // hop — so pointer/key timing stays even. Control messages still take
+            // the @MainActor path.
+            if PeerNetwork.shared.injectHotInput(message) {
+                PeerNetwork.shared.receiveNext(on: connection)
+            } else {
+                Task { @MainActor in
+                    await PeerNetwork.shared.processIncoming(message, connection: connection)
+                }
             }
+        }
+    }
+
+    nonisolated private func injectHotInput(_ m: PeerMessage) -> Bool {
+        guard !localToken.isEmpty, m.token == localToken else { return false }
+        switch m.action {
+        case .keyEvent:
+            if let kc = m.keyCode, let kd = m.keyDown {
+                InputBridge.shared.inject(keyCode: kc, keyDown: kd, flags: m.flags ?? 0, isFlagsChanged: m.isFlagsChanged ?? false)
+            }
+            return true
+        case .mouseEvent:
+            if let kind = m.mouseKind {
+                InputBridge.shared.injectMouse(MousePayload(
+                    kind: kind, dx: m.dx ?? 0, dy: m.dy ?? 0,
+                    scrollDX: m.scrollDX ?? 0, scrollDY: m.scrollDY ?? 0, button: m.button ?? 0))
+            }
+            return true
+        default:
+            return false
         }
     }
 
