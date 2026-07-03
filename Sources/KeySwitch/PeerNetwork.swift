@@ -13,6 +13,7 @@ final class PeerNetwork: ObservableObject {
     @MainActor @Published private(set) var isFetchingPeerSetup = false
 
     private var listener: NWListener?
+    private var udpListener: NWListener?
     private var browser: NWBrowser?
     private let queue = DispatchQueue(label: "com.keyswitch.network")
     private let encoder = JSONEncoder()
@@ -20,7 +21,12 @@ final class PeerNetwork: ObservableObject {
     // The forwarding stream and cached auth are touched only on the main thread:
     // beginKeyForwarding/stopKeyForwarding are @MainActor, and the event-tap
     // callback runs on the main run loop. nonisolated(unsafe) documents that.
+    // outboundStream (TCP) carries keys + buttons, which must never be dropped.
+    // outboundUDP carries move/scroll: high-rate and loss-tolerant, so a dropped
+    // or reordered packet just gets superseded by the next delta — no TCP
+    // head-of-line blocking stalling the whole stream when WiFi hiccups.
     nonisolated(unsafe) private var outboundStream: NWConnection?
+    nonisolated(unsafe) private var outboundUDP: NWConnection?
     nonisolated(unsafe) private var fwdToken = ""
     nonisolated(unsafe) private var fwdHost = ""
     nonisolated(unsafe) private var localToken = "" // this Mac's token, for authing incoming hot events
@@ -58,6 +64,7 @@ final class PeerNetwork: ObservableObject {
         wantsListening = true
         localToken = config.pairingToken
         startListener(port: config.listenPort, serviceName: config.thisMacName)
+        startUDPListener(port: config.listenPort)
         startBrowser(excludingName: config.thisMacName)
     }
 
@@ -66,6 +73,8 @@ final class PeerNetwork: ObservableObject {
         wantsListening = false
         listener?.cancel()
         listener = nil
+        udpListener?.cancel()
+        udpListener = nil
         browser?.cancel()
         browser = nil
         isListening = false
@@ -83,6 +92,47 @@ final class PeerNetwork: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             guard let self, self.wantsListening, self.listener == nil else { return }
             self.startListener(port: port, serviceName: serviceName)
+        }
+    }
+
+    @MainActor
+    private func retryUDPListenerSoon(port: UInt16) {
+        guard wantsListening else { return }
+        udpListener?.cancel()
+        udpListener = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self, self.wantsListening, self.udpListener == nil else { return }
+            self.startUDPListener(port: port)
+        }
+    }
+
+    private func startUDPListener(port: UInt16) {
+        do {
+            let listener = try NWListener(using: .udp, on: NWEndpoint.Port(rawValue: port)!)
+            listener.stateUpdateHandler = { state in
+                if case .failed = state {
+                    Task { @MainActor in PeerNetwork.shared.retryUDPListenerSoon(port: port) }
+                }
+            }
+            listener.newConnectionHandler = { connection in
+                connection.start(queue: PeerNetwork.shared.queue)
+                PeerNetwork.shared.receiveDatagramLoop(on: connection)
+            }
+            listener.start(queue: queue)
+            self.udpListener = listener
+        } catch {
+            Task { @MainActor in PeerNetwork.shared.retryUDPListenerSoon(port: port) }
+        }
+    }
+
+    /// UDP datagrams need no length-prefix framing — one receive = one message.
+    private func receiveDatagramLoop(on connection: NWConnection) {
+        connection.receiveMessage { [weak self] data, _, _, error in
+            if let data, !data.isEmpty, let message = try? JSONDecoder().decode(PeerMessage.self, from: data) {
+                _ = self?.injectHotInput(message)
+            }
+            guard error == nil else { return }
+            self?.receiveDatagramLoop(on: connection)
         }
     }
 
@@ -370,6 +420,11 @@ final class PeerNetwork: ObservableObject {
         outboundStream = connection
         fwdToken = config.pairingToken
         fwdHost = config.thisMacName
+
+        let udp = NWConnection(to: endpoint, using: .udp)
+        udp.start(queue: queue)
+        outboundUDP = udp
+
         startMoveFlush()
         return await withCheckedContinuation { continuation in
             var resumed = false
@@ -402,6 +457,8 @@ final class PeerNetwork: ObservableObject {
         stopMoveFlush()
         outboundStream?.cancel()
         outboundStream = nil
+        outboundUDP?.cancel()
+        outboundUDP = nil
     }
 
     // Hot send path. Moves and scrolls are COALESCED: their deltas accumulate on
@@ -460,25 +517,28 @@ final class PeerNetwork: ObservableObject {
         }
     }
 
-    /// Flush accumulated move + scroll as at most one packet each. MUST run on `queue`.
+    /// Flush accumulated move + scroll as at most one packet each, over UDP —
+    /// not TCP — so a lost/delayed packet never blocks the ones behind it. MUST
+    /// run on `queue`.
     private func flushPendingOnQueue() {
         if hasPendingMove {
             let dx = pendingDX, dy = pendingDY
             pendingDX = 0; pendingDY = 0; hasPendingMove = false
             var message = PeerMessage(action: .mouseEvent, hostName: fwdHost, token: fwdToken, setupStatus: nil)
             message.mouseKind = "move"; message.dx = dx; message.dy = dy
-            emitOnQueue(message)
+            emitUDP(message)
         }
         if hasPendingScroll {
             let sx = pendingScrollDX, sy = pendingScrollDY
             pendingScrollDX = 0; pendingScrollDY = 0; hasPendingScroll = false
             var message = PeerMessage(action: .mouseEvent, hostName: fwdHost, token: fwdToken, setupStatus: nil)
             message.mouseKind = "scroll"; message.scrollDX = sx; message.scrollDY = sy
-            emitOnQueue(message)
+            emitUDP(message)
         }
     }
 
-    /// MUST run on `queue` (uses the shared encoder single-threaded).
+    /// MUST run on `queue` (uses the shared encoder single-threaded). TCP path
+    /// for keys/buttons, which must arrive reliably and in order.
     private func emitOnQueue(_ message: PeerMessage) {
         guard let connection = outboundStream, let data = try? encoder.encode(message) else { return }
         var framed = Data(capacity: data.count + 4)
@@ -486,6 +546,13 @@ final class PeerNetwork: ObservableObject {
         withUnsafeBytes(of: &length) { framed.append(contentsOf: $0) }
         framed.append(data)
         connection.send(content: framed, completion: .idempotent)
+    }
+
+    /// UDP path for move/scroll — connectionless, no framing, no head-of-line
+    /// blocking. MUST run on `queue`.
+    private func emitUDP(_ message: PeerMessage) {
+        guard let connection = outboundUDP, let data = try? encoder.encode(message) else { return }
+        connection.send(content: data, completion: .idempotent)
     }
 
     private func startMoveFlush() {
