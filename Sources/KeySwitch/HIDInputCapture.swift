@@ -69,7 +69,6 @@ final class HIDInputCapture {
 
     private let manager: IOHIDManager
     private var keyboardDevice: IOHIDDevice?
-    private var keyboardSeized = false
     private var mouseDevice: IOHIDDevice?
     private var modifierState: [UInt32: Bool] = [:]
 
@@ -154,14 +153,23 @@ final class HIDInputCapture {
         }
     }
 
-    // MARK: - Keyboard (always-on monitor, seized only while forwarding)
+    // MARK: - Keyboard (always non-exclusive — see note below)
+    //
+    // macOS refuses IOHIDDeviceOpen(..., kIOHIDOptionsTypeSeizeDevice) for
+    // keyboards with kIOReturnNotPrivileged unless the process is root or holds
+    // a private entitlement — deliberate anti-keylogger hardening, confirmed
+    // empirically (mice have no such restriction). So the keyboard can only ever
+    // be MONITORED here, never exclusively seized. Capture/hotkey detection both
+    // work fine non-exclusively; local suppression while forwarding (so the
+    // built-in keyboard's own typing doesn't leak through too) is handled by a
+    // separate, forwarding-scoped CGEventTap in InputBridge — see
+    // installSuppressionTap()/removeSuppressionTap().
 
     func startKeyboardMonitor(vendorID: Int, productID: Int) -> Bool {
         stopKeyboardMonitor()
         guard let d = resolveKeyboardDevice(vendorID: vendorID, productID: productID) else { return false }
         guard IOHIDDeviceOpen(d, IOOptionBits(kIOHIDOptionsTypeNone)) == kIOReturnSuccess else { return false }
         keyboardDevice = d
-        keyboardSeized = false
         registerKeyboardCallback(d)
         return true
     }
@@ -169,50 +177,22 @@ final class HIDInputCapture {
     func stopKeyboardMonitor() {
         if let d = keyboardDevice {
             IOHIDDeviceRegisterInputValueCallback(d, nil, nil)
-            IOHIDDeviceClose(d, IOOptionBits(keyboardSeized ? kIOHIDOptionsTypeSeizeDevice : kIOHIDOptionsTypeNone))
+            IOHIDDeviceClose(d, IOOptionBits(kIOHIDOptionsTypeNone))
         }
         keyboardDevice = nil
-        keyboardSeized = false
-    }
-
-    /// Re-open the monitored keyboard exclusively so its keys stop reaching
-    /// local apps and only get forwarded. Called when forwarding turns on.
-    @discardableResult
-    func seizeKeyboard() -> Bool {
-        guard let d = keyboardDevice, !keyboardSeized else { return keyboardSeized }
-        IOHIDDeviceRegisterInputValueCallback(d, nil, nil)
-        IOHIDDeviceClose(d, IOOptionBits(kIOHIDOptionsTypeNone))
-        guard IOHIDDeviceOpen(d, IOOptionBits(kIOHIDOptionsTypeSeizeDevice)) == kIOReturnSuccess else {
-            _ = IOHIDDeviceOpen(d, IOOptionBits(kIOHIDOptionsTypeNone))
-            registerKeyboardCallback(d)
-            return false
-        }
-        keyboardSeized = true
-        registerKeyboardCallback(d)
-        return true
-    }
-
-    /// Drop back to non-exclusive monitoring so the keyboard resumes fully
-    /// normal local behavior. Called when forwarding turns off.
-    func releaseKeyboardSeize() {
-        guard let d = keyboardDevice, keyboardSeized else { return }
-        IOHIDDeviceRegisterInputValueCallback(d, nil, nil)
-        IOHIDDeviceClose(d, IOOptionBits(kIOHIDOptionsTypeSeizeDevice))
-        keyboardSeized = false
-        _ = IOHIDDeviceOpen(d, IOOptionBits(kIOHIDOptionsTypeNone))
-        registerKeyboardCallback(d)
     }
 
     // MARK: - Mouse (only opened while forwarding)
 
     @discardableResult
-    func seizeMouse(vendorID: Int, productID: Int) -> Bool {
+    func seizeMouse(vendorID: Int, productID: Int) -> IOReturn {
         releaseMouse()
-        guard let d = resolveMouseDevice(vendorID: vendorID, productID: productID) else { return false }
-        guard IOHIDDeviceOpen(d, IOOptionBits(kIOHIDOptionsTypeSeizeDevice)) == kIOReturnSuccess else { return false }
+        guard let d = resolveMouseDevice(vendorID: vendorID, productID: productID) else { return IOReturn(bitPattern: 0xE00002C2) }
+        let result = IOHIDDeviceOpen(d, IOOptionBits(kIOHIDOptionsTypeSeizeDevice))
+        guard result == kIOReturnSuccess else { return result }
         mouseDevice = d
         registerMouseCallback(d)
-        return true
+        return kIOReturnSuccess
     }
 
     func releaseMouse() {

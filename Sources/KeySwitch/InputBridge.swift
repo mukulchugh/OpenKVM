@@ -1,5 +1,6 @@
 import ApplicationServices
 import Cocoa
+import IOKit
 
 /// A portable mouse action sent over the wire. Movement is a relative delta so it
 /// works regardless of the two Macs' differing screen sizes and cursor positions.
@@ -14,10 +15,17 @@ struct MousePayload: Sendable {
 
 /// Captures keyboard + mouse from a specific EXTERNAL device (via HIDInputCapture,
 /// picked by vendor/product ID — see Settings) and forwards it to the peer Mac.
-/// The built-in trackpad and keyboard are never opened by this class, so they
-/// always keep working locally, on both Macs, whether forwarding is on or off.
-/// ⌘⇧K from the selected external keyboard toggles forwarding and is always
-/// handled locally, so the user is never locked out of the owner Mac.
+/// The built-in trackpad is NEVER opened by this class, so it always keeps
+/// working locally on both Macs. The mouse is exclusively seized while
+/// forwarding (macOS allows this for mice), so only the selected external mouse
+/// is affected. The keyboard cannot be exclusively seized — macOS refuses that
+/// for ANY app without root, as anti-keylogger hardening — so while forwarding,
+/// a small CGEventTap additionally suppresses ALL local keyboard input
+/// (built-in included) so it doesn't leak into local apps too; this tap only
+/// exists while forwarding is active, never otherwise. ⌘⇧K from the selected
+/// external keyboard toggles forwarding and is always handled locally (via the
+/// HID monitor, unaffected by the suppression tap), so the user is never locked
+/// out of the owner Mac.
 @MainActor
 final class InputBridge: ObservableObject {
     static let shared = InputBridge()
@@ -33,6 +41,8 @@ final class InputBridge: ObservableObject {
 
     private var promptedForPermissions = false
     private let hid = HIDInputCapture.shared
+    private var suppressionTap: CFMachPort?
+    private var suppressionRunLoopSource: CFRunLoopSource?
 
     private init() {
         hid.onHotkey = { [weak self] in
@@ -187,8 +197,8 @@ final class InputBridge: ObservableObject {
     func toggleForwarding() async {
         if isForwarding {
             PeerNetwork.shared.stopKeyForwarding()
-            hid.releaseKeyboardSeize()
             hid.releaseMouse()
+            removeSuppressionTap()
             setLocalCursorFrozen(false)
             isForwarding = false
             lastMessage = "Keyboard & mouse are local."
@@ -212,20 +222,73 @@ final class InputBridge: ObservableObject {
             return
         }
 
-        let keyboardOK = hid.seizeKeyboard()
-        let mouseOK = hid.seizeMouse(vendorID: mouse.vendorID, productID: mouse.productID)
-        guard keyboardOK, mouseOK else {
+        let mouseResult = hid.seizeMouse(vendorID: mouse.vendorID, productID: mouse.productID)
+        guard mouseResult == kIOReturnSuccess else {
             PeerNetwork.shared.stopKeyForwarding()
-            hid.releaseKeyboardSeize()
             hid.releaseMouse()
             isForwarding = false
-            lastMessage = "Couldn't take exclusive control of the keyboard/mouse. Try again."
+            lastMessage = "Couldn't take exclusive control of the mouse (\(Self.ioReturnName(mouseResult))). Another app may be holding it open."
+            return
+        }
+        guard installSuppressionTap() else {
+            PeerNetwork.shared.stopKeyForwarding()
+            hid.releaseMouse()
+            isForwarding = false
+            lastMessage = "Couldn't suppress local typing — check Accessibility & Input Monitoring access."
             return
         }
 
         setLocalCursorFrozen(true)
         isForwarding = true
         lastMessage = "Controlling \(ConfigStore.shared.config.peerHostName.isEmpty ? "other Mac" : ConfigStore.shared.config.peerHostName). Press \(Self.hotkeyDisplay) to come back."
+    }
+
+    /// Since macOS won't let us exclusively seize a keyboard, this tap exists
+    /// ONLY while forwarding and unconditionally swallows every keyboard event
+    /// system-wide (built-in included) so local apps don't ALSO see what's being
+    /// forwarded. The HID monitor (unaffected by this tap) is what actually
+    /// captures + forwards the external keyboard's keys and detects ⌘⇧K.
+    private func installSuppressionTap() -> Bool {
+        removeSuppressionTap()
+        let mask: CGEventMask =
+            (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
+        guard let tap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: { proxy, type, event, refcon in
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    if let refcon {
+                        let bridge = Unmanaged<InputBridge>.fromOpaque(refcon).takeUnretainedValue()
+                        Task { @MainActor in
+                            if let tap = bridge.suppressionTap { CGEvent.tapEnable(tap: tap, enable: true) }
+                        }
+                    }
+                    return Unmanaged.passRetained(event)
+                }
+                return nil // swallow everything while this tap exists
+            },
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        ) else {
+            return false
+        }
+        suppressionTap = tap
+        let source = CFMachPortCreateRunLoopSource(nil, tap, 0)
+        suppressionRunLoopSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        return true
+    }
+
+    private func removeSuppressionTap() {
+        guard let tap = suppressionTap else { return }
+        CGEvent.tapEnable(tap: tap, enable: false)
+        if let source = suppressionRunLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+        suppressionTap = nil
+        suppressionRunLoopSource = nil
     }
 
     /// Purely cosmetic now: the external mouse is exclusively seized while
@@ -241,12 +304,23 @@ final class InputBridge: ObservableObject {
         }
     }
 
+    /// Decode the handful of IOReturn codes actually worth distinguishing.
+    private static func ioReturnName(_ code: IOReturn) -> String {
+        switch code {
+        case IOReturn(bitPattern: 0xE00002C5): return "exclusive access — already open elsewhere"
+        case IOReturn(bitPattern: 0xE00002E2): return "not permitted"
+        case IOReturn(bitPattern: 0xE00002C2): return "no device"
+        case IOReturn(bitPattern: 0xE00002EB): return "not open"
+        default: return "IOReturn 0x\(String(UInt32(bitPattern: code), radix: 16))"
+        }
+    }
+
     /// Called when the forwarding connection drops unexpectedly, so we don't
     /// leave devices seized and forwarding state stuck on.
     func forwardingDropped() {
         guard isForwarding else { return }
-        hid.releaseKeyboardSeize()
         hid.releaseMouse()
+        removeSuppressionTap()
         setLocalCursorFrozen(false)
         isForwarding = false
         lastMessage = "Lost the other Mac — keyboard & mouse are local again."
