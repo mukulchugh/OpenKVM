@@ -1,5 +1,5 @@
 #!/bin/bash
-# Creates a self-signed code-signing certificate named "KeySwitch Dev" in the
+# Creates a self-signed code-signing certificate named "OpenKVM Dev" in the
 # login keychain. Run ONCE per Mac. build-app.sh picks it up automatically.
 #
 # Why: macOS ties Accessibility (TCC) permission to the app's code signature.
@@ -7,7 +7,7 @@
 # rebuild. A stable local cert means you grant Accessibility once and it sticks.
 set -euo pipefail
 
-CERT_NAME="KeySwitch Dev"
+CERT_NAME="OpenKVM Dev"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -36,5 +36,5 @@ security add-trusted-cert -p codeSign \
 echo ""
 security find-identity -v -p codesigning | grep "$CERT_NAME" || true
 echo "Done. build-app.sh will now sign with '$CERT_NAME'."
-echo "After the NEXT install, re-add KeySwitch in System Settings → Privacy & Security"
+echo "After the NEXT install, re-add OpenKVM in System Settings → Privacy & Security"
 echo "→ Accessibility one final time. It will survive all future rebuilds."

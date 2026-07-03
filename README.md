@@ -1,4 +1,4 @@
-# KeySwitch
+# OpenKVM
 
 macOS menu bar app that forwards a physical keyboard and mouse from one Mac to another over the local network.
 
@@ -6,7 +6,7 @@ The Mac with the hardware attached captures keystrokes and pointer events, sends
 
 ## Why not Universal Control?
 
-Apple already ships this for free between two Macs — [Universal Control](https://support.apple.com/en-us/102459) is supposed to just work. In practice it's unreliable for a lot of people, and that's the gap KeySwitch fills:
+Apple already ships this for free between two Macs — [Universal Control](https://support.apple.com/en-us/102459) is supposed to just work. In practice it's unreliable for a lot of people, and that's the gap OpenKVM fills:
 
 | Universal Control requirement | Why it breaks |
 |---|---|
@@ -20,20 +20,20 @@ Apple already ships this for free between two Macs — [Universal Control](https
 
 Real reports of it failing: [MacRumors troubleshooting thread](https://forums.macrumors.com/threads/universal-control-not-working-heres-how-to-fix-it.2334383/), [r/apple PSA](https://www.reddit.com/r/apple/comments/tf488r/psa_fixing_universal_control_if_it_doesnt_work/), [MacPowerUsers forum](https://talk.macpowerusers.com/t/problem-with-universal-control-between-two-macs/33718), [Ask Different](https://apple.stackexchange.com/questions/444934/universal-control-not-working-on-two-macbook-pros).
 
-KeySwitch doesn't depend on Handoff, iCloud, or the same Apple ID — it's a plain TCP/UDP connection over Bonjour with its own pairing token. More setup than Universal Control when Universal Control works; more reliable when it doesn't.
+OpenKVM doesn't depend on Handoff, iCloud, or the same Apple ID — it's a plain TCP/UDP connection over Bonjour with its own pairing token. More setup than Universal Control when Universal Control works; more reliable when it doesn't.
 
-**If Universal Control works for you, use it — it's free and built in.** KeySwitch is for the case where it doesn't: different Apple IDs (work + personal Mac), a flaky network, or you just want an explicit hotkey instead of edge-scroll.
+**If Universal Control works for you, use it — it's free and built in.** OpenKVM is for the case where it doesn't: different Apple IDs (work + personal Mac), a flaky network, or you just want an explicit hotkey instead of edge-scroll.
 
 ## Requirements
 
 - macOS 13+
 - Xcode Command Line Tools (`swift`, `xcodebuild`)
 - Both Macs on the same local network (or reachable by IP)
-- KeySwitch installed and running on **both** Macs
+- OpenKVM installed and running on **both** Macs
 
 ## Quick start
 
-1. Build or install KeySwitch on both Macs (see [Install](#install)).
+1. Build or install OpenKVM on both Macs (see [Install](#install)).
 2. On the Mac **with the keyboard**, open **Settings** and enable **This Mac has the physical keyboard**.
 3. On either Mac, open **Settings → Other Mac** and click **Pair** next to the discovered peer. Approve the dialog on the other Mac.
 4. Grant **Accessibility**, **Input Monitoring**, and **Local Network** when prompted.
@@ -45,7 +45,7 @@ KeySwitch doesn't depend on Handoff, iCloud, or the same Apple ID — it's a pla
 ./build-app.sh
 ```
 
-Output: `dist/KeySwitch.app` (universal arm64 + x86_64)
+Output: `dist/OpenKVM.app` (universal arm64 + x86_64)
 
 For a stable code signature so Accessibility permission survives rebuilds:
 
@@ -63,8 +63,8 @@ chmod +x build-dmg.sh
 
 Output:
 
-- `dist/KeySwitch.zip` — **preferred for your other Mac** (avoids false "damaged" errors)
-- `dist/KeySwitch.dmg` — drag-to-Applications installer
+- `dist/OpenKVM.zip` — **preferred for your other Mac** (avoids false "damaged" errors)
+- `dist/OpenKVM.dmg` — drag-to-Applications installer
 
 ## Install
 
@@ -73,29 +73,29 @@ Output:
 macOS shows that for unsigned apps — the file is not actually corrupted. Use the ZIP instead:
 
 ```bash
-# On the other Mac, after copying KeySwitch.zip over:
-unzip KeySwitch.zip
+# On the other Mac, after copying OpenKVM.zip over:
+unzip OpenKVM.zip
 chmod +x install-on-mac.sh
 ./install-on-mac.sh
 ```
 
-Then right-click **KeySwitch → Open** in Applications (first launch only).
+Then right-click **OpenKVM → Open** in Applications (first launch only).
 
 If you still want the DMG:
 
 ```bash
-xattr -cr ~/Downloads/KeySwitch.dmg
-open ~/Downloads/KeySwitch.dmg
+xattr -cr ~/Downloads/OpenKVM.dmg
+open ~/Downloads/OpenKVM.dmg
 ```
 
 ### From DMG (this Mac)
 
-Open `dist/KeySwitch.dmg`, drag KeySwitch to Applications.
+Open `dist/OpenKVM.dmg`, drag OpenKVM to Applications.
 
 ### From app bundle
 
 ```bash
-cp -R dist/KeySwitch.app /Applications/
+cp -R dist/OpenKVM.app /Applications/
 ```
 
 First launch: right-click → Open (unsigned build). Grant **Accessibility**, **Input Monitoring**, **Post Event** (on the receiver), and **Local Network** permissions.
@@ -132,7 +132,7 @@ Use **Test connection** (Advanced) to verify reachability.
 |-----------|------|
 | **HIDInputCapture** | IOKit HID Manager capture from one specific external keyboard + mouse (never the built-in trackpad/keyboard) |
 | **InputBridge** | Orchestrates capture/injection, hotkey, media keys, CGEvent replay on the receiver |
-| **PeerNetwork** | TCP (keys/buttons) + UDP (mouse move/scroll) listener, Bonjour discovery (`_keyswitch._tcp`), wire protocol |
+| **PeerNetwork** | TCP (keys/buttons) + UDP (mouse move/scroll) listener, Bonjour discovery (`_openkvm._tcp`), wire protocol |
 | **ConfigStore** | Persists pairing token, peer, owner flag in UserDefaults |
 | **SettingsView** | SwiftUI settings: pairing, permissions, diagnostics |
 
@@ -154,7 +154,7 @@ python3 scripts/test-peer-setup.py 127.0.0.1 9847 <your-token>
 ## Project structure
 
 ```
-Sources/KeySwitch/     Application source (7 Swift files)
+Sources/OpenKVM/     Application source (7 Swift files)
 Resources/             Info.plist, app icon
 scripts/               Installer, signing cert, test clients
 build-app.sh           Universal .app packaging

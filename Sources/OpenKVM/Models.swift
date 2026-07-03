@@ -144,7 +144,7 @@ enum SwitchError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .peerUnreachable:
-            return "Other Mac is unreachable. Is KeySwitch running on both machines?"
+            return "Other Mac is unreachable. Is OpenKVM running on both machines?"
         case .authFailed:
             return "Pairing token mismatch. Use the same token on both Macs."
         case .accessibilityDenied:

@@ -42,7 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateStatusIcon() {
         guard let button = statusItem.button else { return }
         let symbol = bridge.isForwarding ? "arrow.left.arrow.right.circle.fill" : "keyboard"
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "KeySwitch")
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "OpenKVM")
     }
 
     private func buildMenu() {
@@ -99,7 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        let quit = NSMenuItem(title: "Quit KeySwitch", action: #selector(quit), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit OpenKVM", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
 
@@ -125,7 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let view = SettingsView()
             let controller = NSHostingController(rootView: view)
             let window = NSWindow(contentViewController: controller)
-            window.title = "KeySwitch Settings"
+            window.title = "OpenKVM Settings"
             window.styleMask = [.titled, .closable, .miniaturizable]
             window.setContentSize(NSSize(width: 500, height: 640))
             window.center()

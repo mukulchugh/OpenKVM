@@ -25,7 +25,7 @@ struct SettingsView: View {
                 ))
 
                 if configStore.config.isKeyboardOwner && !bridge.canCapture {
-                    Label("KeySwitch needs Accessibility AND Input Monitoring to capture the keyboard & mouse.", systemImage: "exclamationmark.triangle.fill")
+                    Label("OpenKVM needs Accessibility AND Input Monitoring to capture the keyboard & mouse.", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                     HStack {
                         Button("Request access") { bridge.requestPermissions() }
@@ -34,7 +34,7 @@ struct SettingsView: View {
                     }
                 }
                 if !configStore.config.isKeyboardOwner && !bridge.canPost {
-                    Label("KeySwitch needs permission to control this Mac (type and move the pointer).", systemImage: "exclamationmark.triangle.fill")
+                    Label("OpenKVM needs permission to control this Mac (type and move the pointer).", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                     HStack {
                         Button("Request access") { bridge.requestPermissions() }
@@ -96,11 +96,11 @@ struct SettingsView: View {
                                 .foregroundStyle(.orange)
                         }
                         if configStore.config.isKeyboardOwner && peer.canPost == false {
-                            Label("\(peer.hostName) can't type yet — grant permission in KeySwitch there.", systemImage: "exclamationmark.triangle.fill")
+                            Label("\(peer.hostName) can't type yet — grant permission in OpenKVM there.", systemImage: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
                         }
                         if configStore.config.isKeyboardOwner && peer.canPost == nil {
-                            Label("\(peer.hostName) runs an old build — update KeySwitch there.", systemImage: "exclamationmark.triangle.fill")
+                            Label("\(peer.hostName) runs an old build — update OpenKVM there.", systemImage: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
                         }
                     }
@@ -111,7 +111,7 @@ struct SettingsView: View {
                 } else if network.discoveredPeers.isEmpty {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text("Looking for your other Mac… Open KeySwitch on it (same Wi‑Fi).")
+                        Text("Looking for your other Mac… Open OpenKVM on it (same Wi‑Fi).")
                             .foregroundStyle(.secondary)
                     }
                 } else {
@@ -151,7 +151,7 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle("Start KeySwitch at login", isOn: Binding(
+                Toggle("Start OpenKVM at login", isOn: Binding(
                     get: { startAtLogin },
                     set: { newValue in
                         startAtLogin = LoginItem.setEnabled(newValue) ? newValue : LoginItem.isEnabled

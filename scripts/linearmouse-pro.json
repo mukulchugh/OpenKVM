@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.linearmouse.app/0.10.2",
-  "_comment": "Pro (receiver) config: KeySwitch injects synthetic mouse events with NO vendor/product ID, so a device-specific `if.device` filter (like the Air's 0x46d/0xc53f) never matches. This scheme has no device filter, so the button mappings apply to the forwarded/injected events. Pointer acceleration is intentionally left at defaults — the movement is already processed on the Air. Place at ~/.config/linearmouse/linearmouse.json on the Pro.",
+  "_comment": "Pro (receiver) config: OpenKVM injects synthetic mouse events with NO vendor/product ID, so a device-specific `if.device` filter (like the Air's 0x46d/0xc53f) never matches. This scheme has no device filter, so the button mappings apply to the forwarded/injected events. Pointer acceleration is intentionally left at defaults — the movement is already processed on the Air. Place at ~/.config/linearmouse/linearmouse.json on the Pro.",
   "schemes": [
     {
       "buttons": {

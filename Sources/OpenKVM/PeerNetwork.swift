@@ -15,7 +15,7 @@ final class PeerNetwork: ObservableObject {
     private var listener: NWListener?
     private var udpListener: NWListener?
     private var browser: NWBrowser?
-    private let queue = DispatchQueue(label: "com.keyswitch.network")
+    private let queue = DispatchQueue(label: "com.openkvm.network")
     private let encoder = JSONEncoder()
 
     // The forwarding stream and cached auth are touched only on the main thread:
@@ -140,8 +140,8 @@ final class PeerNetwork: ObservableObject {
         do {
             let params = Self.lowLatencyParams()
             let listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
-            let advertisedName = serviceName.isEmpty ? (Host.current().localizedName ?? "KeySwitch") : serviceName
-            listener.service = NWListener.Service(name: advertisedName, type: "_keyswitch._tcp")
+            let advertisedName = serviceName.isEmpty ? (Host.current().localizedName ?? "OpenKVM") : serviceName
+            listener.service = NWListener.Service(name: advertisedName, type: "_openkvm._tcp")
             listener.stateUpdateHandler = { state in
                 Task { @MainActor in
                     let net = PeerNetwork.shared
@@ -173,7 +173,7 @@ final class PeerNetwork: ObservableObject {
 
     private func startBrowser(excludingName: String) {
         let params = NWParameters.tcp
-        let browser = NWBrowser(for: .bonjour(type: "_keyswitch._tcp", domain: nil), using: params)
+        let browser = NWBrowser(for: .bonjour(type: "_openkvm._tcp", domain: nil), using: params)
         browser.stateUpdateHandler = { state in
             if case .failed(let error) = state {
                 Task { @MainActor in
@@ -377,7 +377,7 @@ final class PeerNetwork: ObservableObject {
     /// if it doesn't have one yet) so both Macs end up with the same token.
     @MainActor
     func requestPairing(peerName: String) async -> Result<(token: String, hostName: String), SwitchError> {
-        let endpoint = NWEndpoint.service(name: peerName, type: "_keyswitch._tcp", domain: "local.", interface: nil)
+        let endpoint = NWEndpoint.service(name: peerName, type: "_openkvm._tcp", domain: "local.", interface: nil)
         let message = PeerMessage(action: .pairRequest, hostName: ConfigStore.shared.config.thisMacName, token: nil, setupStatus: nil)
         do {
             let response = try await request(message, to: endpoint)
@@ -665,7 +665,7 @@ final class PeerNetwork: ObservableObject {
             if response?.action == .status {
                 return (false, "Token mismatch — use the same token on both Macs.")
             }
-            return (false, "Unexpected peer response. Is KeySwitch running on the other Mac?")
+            return (false, "Unexpected peer response. Is OpenKVM running on the other Mac?")
         } catch let error as SwitchError {
             return (false, error.localizedDescription)
         } catch {
@@ -683,7 +683,7 @@ final class PeerNetwork: ObservableObject {
         if !config.peerHostName.isEmpty {
             return NWEndpoint.service(
                 name: config.peerHostName,
-                type: "_keyswitch._tcp",
+                type: "_openkvm._tcp",
                 domain: "local.",
                 interface: nil
             )

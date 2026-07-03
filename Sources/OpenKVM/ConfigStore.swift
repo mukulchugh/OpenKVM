@@ -8,7 +8,7 @@ final class ConfigStore: ObservableObject {
         didSet { save() }
     }
 
-    private let key = "com.keyswitch.config"
+    private let key = "com.openkvm.config"
 
     private init() {
         if let data = UserDefaults.standard.data(forKey: key),

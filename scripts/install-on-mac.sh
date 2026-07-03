@@ -3,8 +3,8 @@
 # Unzip, then double-click this file — or run: ./install-on-mac.sh
 set -euo pipefail
 
-APP_NAME="KeySwitch"
-BUNDLE_ID="com.keyswitch.app"
+APP_NAME="OpenKVM"
+BUNDLE_ID="com.openkvm.app"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_APP="$SCRIPT_DIR/${APP_NAME}.app"
 DEST="/Applications/${APP_NAME}.app"
@@ -14,8 +14,8 @@ if [[ ! -d "$SRC_APP" ]]; then
     exit 1
 fi
 
-echo "==> Quitting any running KeySwitch..."
-osascript -e 'quit app "KeySwitch"' 2>/dev/null || true
+echo "==> Quitting any running OpenKVM..."
+osascript -e 'quit app "OpenKVM"' 2>/dev/null || true
 sleep 1
 
 echo "==> Installing to ${DEST}..."
@@ -35,8 +35,8 @@ open "$DEST"
 echo ""
 echo "Installed and running. On THIS Mac (the receiver):"
 echo "  1. Approve the Accessibility prompt (or System Settings →"
-echo "     Privacy & Security → Accessibility → enable KeySwitch)."
-echo "  2. Open KeySwitch Settings and make sure"
+echo "     Privacy & Security → Accessibility → enable OpenKVM)."
+echo "  2. Open OpenKVM Settings and make sure"
 echo "     \"This Mac has the physical keyboard\" is OFF."
 echo ""
 echo "Then on the Mac WITH the keyboard, press Command+Shift+K to switch."

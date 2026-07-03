@@ -1,7 +1,7 @@
 import AppKit
 
 @main
-struct KeySwitchApp {
+struct OpenKVMApp {
     static func main() {
         let app = NSApplication.shared
         let delegate = AppDelegate()

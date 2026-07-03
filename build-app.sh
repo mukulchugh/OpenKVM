@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-APP_NAME="KeySwitch"
+APP_NAME="OpenKVM"
 APP_DIR="$ROOT/dist/${APP_NAME}.app"
 ARM_BIN="$ROOT/.build/arm64-apple-macosx/release/$APP_NAME"
 INTEL_BIN="$ROOT/.build/x86_64-apple-macosx/release/$APP_NAME"
@@ -29,8 +29,8 @@ if command -v codesign >/dev/null 2>&1; then
     # Stable identity keeps TCC/Accessibility permission across rebuilds
     # (ad-hoc "-" changes every build, breaking the permission each time).
     # Create it once with: ./scripts/make-signing-cert.sh
-    if security find-identity -v -p codesigning | grep -q "KeySwitch Dev"; then
-        SIGN_ID="KeySwitch Dev"
+    if security find-identity -v -p codesigning | grep -q "OpenKVM Dev"; then
+        SIGN_ID="OpenKVM Dev"
     else
         SIGN_ID="-"
         echo "NOTE: signing ad-hoc. Run ./scripts/make-signing-cert.sh once so"

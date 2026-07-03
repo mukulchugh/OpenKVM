@@ -4,8 +4,8 @@
 # Run on BOTH Macs. Usage: ./scripts/clean-install.sh
 set -euo pipefail
 
-APP="KeySwitch"
-BUNDLE="com.keyswitch.app"
+APP="OpenKVM"
+BUNDLE="com.openkvm.app"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ZIP="$ROOT/release/${APP}.zip"
 
@@ -14,10 +14,10 @@ if [[ ! -f "$ZIP" ]]; then
     exit 1
 fi
 
-echo "==> Quitting KeySwitch..."
-osascript -e 'quit app "KeySwitch"' 2>/dev/null || true
+echo "==> Quitting OpenKVM..."
+osascript -e 'quit app "OpenKVM"' 2>/dev/null || true
 sleep 1
-pkill -9 -f "KeySwitch.app/Contents/MacOS" 2>/dev/null || true
+pkill -9 -f "OpenKVM.app/Contents/MacOS" 2>/dev/null || true
 sleep 1
 
 echo "==> Removing old app..."

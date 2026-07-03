@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "KeySwitch",
+    name: "OpenKVM",
     platforms: [.macOS(.v13)],
     targets: [
         .executableTarget(
-            name: "KeySwitch",
-            path: "Sources/KeySwitch",
+            name: "OpenKVM",
+            path: "Sources/OpenKVM",
             resources: [.process("../../Resources")],
             linkerSettings: [
                 .linkedFramework("ApplicationServices"),

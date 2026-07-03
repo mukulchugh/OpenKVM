@@ -139,7 +139,7 @@ final class HIDInputCapture {
             ready.signal()
             CFRunLoopRun()
         }
-        thread.name = "com.keyswitch.hid"
+        thread.name = "com.openkvm.hid"
         thread.qualityOfService = QualityOfService.userInteractive
         thread.threadPriority = 1.0
         thread.start()

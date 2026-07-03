@@ -1,6 +1,6 @@
-# KeySwitch — Architecture & Developer Guide
+# OpenKVM — Architecture & Developer Guide
 
-KeySwitch is a macOS menu bar application that lets you use one physical keyboard and mouse across two Macs on the same local network. The Mac with the hardware attached captures input and forwards it over TCP; the other Mac replays those events as if they came from a local device.
+OpenKVM is a macOS menu bar application that lets you use one physical keyboard and mouse across two Macs on the same local network. The Mac with the hardware attached captures input and forwards it over TCP; the other Mac replays those events as if they came from a local device.
 
 This document describes the codebase end to end: project layout, runtime architecture, wire protocol, permissions, build pipeline, and development workflow.
 
@@ -57,10 +57,10 @@ Users toggle forwarding with **⌘⇧K** or the menu bar. The hotkey is always h
 ## Repository layout
 
 ```
-KeySwitch/
+OpenKVM/
 ├── Package.swift              # SPM manifest — one executable target
-├── Sources/KeySwitch/           # All application source
-│   ├── KeySwitchApp.swift     # @main entry — NSApplication bootstrap
+├── Sources/OpenKVM/           # All application source
+│   ├── OpenKVMApp.swift     # @main entry — NSApplication bootstrap
 │   ├── AppDelegate.swift      # Menu bar, lifecycle, settings window
 │   ├── SettingsView.swift     # SwiftUI settings UI
 │   ├── ConfigStore.swift      # UserDefaults persistence
@@ -105,7 +105,7 @@ Build artifacts land in `.build/` (SPM) and `dist/` (`.app`, `.dmg`, `.zip`). Bo
 └───────────────┘     │  TCP framing    │     └─────────────────┘
                       └────────┬────────┘
                                │
-                      Bonjour _keyswitch._tcp
+                      Bonjour _openkvm._tcp
                       TCP :9847 (default)
                                │
                       ┌────────▼────────┐
@@ -118,7 +118,7 @@ All three singletons (`ConfigStore.shared`, `PeerNetwork.shared`, `InputBridge.s
 
 ### Startup sequence
 
-1. `KeySwitchApp.main()` creates `NSApplication` with `AppDelegate`.
+1. `OpenKVMApp.main()` creates `NSApplication` with `AppDelegate`.
 2. `applicationDidFinishLaunching`:
    - Sets activation policy to `.accessory` (menu bar only, no Dock icon).
    - Creates status item and menu.
@@ -131,7 +131,7 @@ All three singletons (`ConfigStore.shared`, `PeerNetwork.shared`, `InputBridge.s
 
 ## Component reference
 
-### `KeySwitchApp.swift`
+### `OpenKVMApp.swift`
 
 Minimal entry point. Uses `NSApplication` + `AppDelegate` instead of SwiftUI `@main` because the app is menu-bar-only (`LSUIElement`).
 
@@ -147,7 +147,7 @@ Minimal entry point. Uses `NSApplication` + `AppDelegate` instead of SwiftUI `@m
 
 ### `ConfigStore.swift`
 
-- Persists `AppConfig` to `UserDefaults` key `com.keyswitch.config`.
+- Persists `AppConfig` to `UserDefaults` key `com.openkvm.config`.
 - `@Published config` auto-saves on every change.
 - `isConfigured`: non-empty pairing token AND (peer hostname OR peer IP).
 
@@ -176,7 +176,7 @@ Singleton managing all networking.
 
 | Subsystem | Implementation |
 |-----------|----------------|
-| Listener | `NWListener` on `listenPort`, advertises `_keyswitch._tcp` |
+| Listener | `NWListener` on `listenPort`, advertises `_openkvm._tcp` |
 | Browser | `NWBrowser` for peer discovery; excludes own `thisMacName` |
 | Request/response | Short-lived connections for ping, setup query, pairing |
 | Forwarding stream | Long-lived `outboundStream` for `keyEvent` / `mouseEvent` |
@@ -327,7 +327,7 @@ python3 scripts/test-peer-ping.py 192.168.1.10 9847 your-token
 
 ## Configuration & persistence
 
-Settings live in `~/Library/Preferences/com.keyswitch.app.plist` (via `UserDefaults`).
+Settings live in `~/Library/Preferences/com.openkvm.app.plist` (via `UserDefaults`).
 
 **Owner Mac setup:**
 
@@ -351,7 +351,7 @@ Settings live in `~/Library/Preferences/com.keyswitch.app.plist` (via `UserDefau
 
 ## macOS permissions (TCC)
 
-KeySwitch requires three privacy grants, depending on role:
+OpenKVM requires three privacy grants, depending on role:
 
 | Permission | TCC service | Owner needs | Receiver needs |
 |------------|-------------|-------------|----------------|
@@ -362,14 +362,14 @@ KeySwitch requires three privacy grants, depending on role:
 `Info.plist` declares:
 
 - `NSLocalNetworkUsageDescription` — local network for keyboard forwarding
-- `NSBonjourServices` — `_keyswitch._tcp`
+- `NSBonjourServices` — `_openkvm._tcp`
 - `LSUIElement` — menu bar agent (no Dock icon)
 
 ### Code signing and TCC stability
 
 macOS binds TCC grants to the app's code signature. Ad-hoc signing (`codesign -`) changes every build, invalidating permissions.
 
-**Fix:** Run `./scripts/make-signing-cert.sh` once to create a stable `"KeySwitch Dev"` identity. `build-app.sh` uses it automatically. After the next install, grant permissions once more — they persist across rebuilds.
+**Fix:** Run `./scripts/make-signing-cert.sh` once to create a stable `"OpenKVM Dev"` identity. `build-app.sh` uses it automatically. After the next install, grant permissions once more — they persist across rebuilds.
 
 `install-on-mac.sh` on the receiver Mac also runs `tccutil reset` for all three services to clear stale entries from older builds.
 
@@ -392,9 +392,9 @@ Steps:
 
 1. `swift build -c release --arch arm64`
 2. `swift build -c release --arch x86_64`
-3. `lipo -create` → fat binary in `dist/KeySwitch.app`
+3. `lipo -create` → fat binary in `dist/OpenKVM.app`
 4. Copy `Info.plist` + `AppIcon.icns`
-5. Optional `codesign` with `"KeySwitch Dev"` or ad-hoc `-`
+5. Optional `codesign` with `"OpenKVM Dev"` or ad-hoc `-`
 
 ### Build DMG + ZIP
 
@@ -406,15 +406,15 @@ Produces:
 
 | Artifact | Use case |
 |----------|----------|
-| `dist/KeySwitch.dmg` | Drag-to-Applications installer |
-| `dist/KeySwitch.zip` | Preferred for the other Mac (avoids false "damaged" Gatekeeper errors) |
+| `dist/OpenKVM.dmg` | Drag-to-Applications installer |
+| `dist/OpenKVM.zip` | Preferred for the other Mac (avoids false "damaged" Gatekeeper errors) |
 
 The ZIP includes `install-on-mac.sh` for turnkey receiver setup.
 
 ### Install on receiver Mac
 
 ```bash
-unzip KeySwitch.zip
+unzip OpenKVM.zip
 chmod +x install-on-mac.sh
 ./install-on-mac.sh
 ```
@@ -427,7 +427,7 @@ First launch of unsigned builds: right-click → Open.
 
 ### Peer connectivity
 
-With KeySwitch running on the target Mac:
+With OpenKVM running on the target Mac:
 
 ```bash
 # Ping
@@ -490,9 +490,9 @@ While forwarding, all other keys go to the peer. A local-only hotkey guarantees 
 
 | Property | Value |
 |----------|-------|
-| Bundle ID | `com.keyswitch.app` |
+| Bundle ID | `com.openkvm.app` |
 | Version | 1.0.0 (CFBundleShortVersionString) |
-| Bonjour type | `_keyswitch._tcp` |
+| Bonjour type | `_openkvm._tcp` |
 | Default port | 9847 |
 
 ---

@@ -5,15 +5,15 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
-    <string>KeySwitch</string>
+    <string>OpenKVM</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>com.keyswitch.app</string>
+    <string>com.openkvm.app</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>KeySwitch</string>
+    <string>OpenKVM</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -25,10 +25,10 @@
     <key>LSUIElement</key>
     <true/>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>KeySwitch uses the local network to forward your keyboard's keystrokes to your other Mac.</string>
+    <string>OpenKVM uses the local network to forward your keyboard's keystrokes to your other Mac.</string>
     <key>NSBonjourServices</key>
     <array>
-        <string>_keyswitch._tcp</string>
+        <string>_openkvm._tcp</string>
     </array>
 </dict>
 </plist>
