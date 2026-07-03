@@ -215,9 +215,19 @@ final class InputBridge: ObservableObject {
         MainActor.assumeIsolated { isForwarding }
     }
 
+    /// Called when the forwarding connection drops unexpectedly, so we don't leave
+    /// the mouse frozen and forwarding state stuck on.
+    func forwardingDropped() {
+        guard isForwarding else { return }
+        setLocalCursorFrozen(false)
+        isForwarding = false
+        lastMessage = "Lost the other Mac — keyboard & mouse are local again."
+    }
+
     func toggleForwarding() async {
         if isForwarding {
             PeerNetwork.shared.stopKeyForwarding()
+            setLocalCursorFrozen(false)
             isForwarding = false
             lastMessage = "Keyboard & mouse are local."
             return
@@ -229,9 +239,23 @@ final class InputBridge: ObservableObject {
         }
         let ok = await PeerNetwork.shared.beginKeyForwarding(config: ConfigStore.shared.config)
         isForwarding = ok
+        if ok { setLocalCursorFrozen(true) }
         lastMessage = ok
             ? "Controlling \(ConfigStore.shared.config.peerHostName.isEmpty ? "other Mac" : ConfigStore.shared.config.peerHostName). Press \(Self.hotkeyDisplay) to come back."
             : "Couldn't reach the other Mac. Still local."
+    }
+
+    /// While forwarding, decouple the physical mouse from THIS Mac's cursor so it
+    /// only drives the peer. Movement events still reach the tap (with deltas), so
+    /// we can forward them; the local cursor just stops moving. Must always be undone
+    /// (here and on quit) or the user's mouse stays frozen.
+    func setLocalCursorFrozen(_ frozen: Bool) {
+        CGAssociateMouseAndMouseCursorPosition(frozen ? 0 : 1)
+        if frozen {
+            CGDisplayHideCursor(CGMainDisplayID())
+        } else {
+            CGDisplayShowCursor(CGMainDisplayID())
+        }
     }
 
     // MARK: - Receiver side (inject)

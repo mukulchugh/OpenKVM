@@ -310,6 +310,7 @@ final class PeerNetwork: ObservableObject {
                     Task { @MainActor in
                         if self?.outboundStream === connection {
                             self?.stopKeyForwarding()
+                            InputBridge.shared.forwardingDropped()
                         }
                     }
                     guard !resumed else { return }

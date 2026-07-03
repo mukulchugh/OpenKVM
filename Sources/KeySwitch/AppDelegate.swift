@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        bridge.setLocalCursorFrozen(false) // never leave the mouse decoupled
         network.stop()
         Task { @MainActor in network.stopKeyForwarding() }
     }
