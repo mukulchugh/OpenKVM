@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         bridge.requestPermissionsIfNeeded()
         bridge.updateOwnerState()
         network.start(config: configStore.config)
+        ClipboardSync.shared.setEnabled(configStore.config.shareClipboard)
         buildMenu()
 
         NotificationCenter.default.addObserver(

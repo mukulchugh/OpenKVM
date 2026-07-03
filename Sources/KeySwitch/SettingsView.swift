@@ -135,6 +135,19 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(statusMessage.hasPrefix("Paired") || statusMessage.hasPrefix("OK") ? .green : .orange)
                 }
+
+                if isPaired {
+                    Toggle("Share clipboard between Macs", isOn: Binding(
+                        get: { configStore.config.shareClipboard },
+                        set: { newValue in
+                            configStore.config.shareClipboard = newValue
+                            ClipboardSync.shared.setEnabled(newValue)
+                        }
+                    ))
+                    Text("Copying text on either Mac makes it available to paste on the other. Works independently of ⌘⇧K.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section {
@@ -163,7 +176,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420, height: 470)
+        .frame(width: 420, height: 510)
         .onAppear {
             startAtLogin = LoginItem.isEnabled
             bridge.refreshPermissions()

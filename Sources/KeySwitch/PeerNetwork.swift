@@ -267,6 +267,14 @@ final class PeerNetwork: ObservableObject {
                 PeerMessage(action: .pong, hostName: config.thisMacName, token: config.pairingToken, setupStatus: nil),
                 on: connection
             )
+        case .clipboardSync:
+            if config.shareClipboard, let text = message.clipboardText {
+                ClipboardSync.shared.applyRemote(text: text)
+            }
+            await sendAndClose(
+                PeerMessage(action: .status, hostName: config.thisMacName, token: config.pairingToken, setupStatus: nil),
+                on: connection
+            )
         case .querySetup:
             await sendAndClose(
                 PeerMessage(
@@ -312,6 +320,15 @@ final class PeerNetwork: ObservableObject {
         guard let endpoint = resolvedPeerEndpoint(config: config) else { throw SwitchError.peerUnreachable }
         let message = PeerMessage(action: action, hostName: config.thisMacName, token: config.pairingToken, setupStatus: nil)
         return try await request(message, to: endpoint)
+    }
+
+    /// Fire-and-forget: clipboard changes are infrequent and non-critical if one
+    /// send fails (the next clipboard change will sync anyway).
+    func sendClipboard(text: String, config: AppConfig) async {
+        guard let endpoint = resolvedPeerEndpoint(config: config) else { return }
+        var message = PeerMessage(action: .clipboardSync, hostName: config.thisMacName, token: config.pairingToken, setupStatus: nil)
+        message.clipboardText = text
+        _ = try? await request(message, to: endpoint)
     }
 
     private func request(_ message: PeerMessage, to endpoint: NWEndpoint) async throws -> PeerMessage? {

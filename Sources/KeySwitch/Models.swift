@@ -24,6 +24,7 @@ struct PeerMessage: Codable, Sendable {
         case setupStatus
         case pairRequest
         case pairResponse
+        case clipboardSync
     }
 
     let action: Action
@@ -46,6 +47,8 @@ struct PeerMessage: Codable, Sendable {
     var button: Int64?
     // pairResponse payload
     var approved: Bool?
+    // clipboardSync payload
+    var clipboardText: String?
 }
 
 struct AppConfig: Codable, Equatable {
@@ -62,6 +65,10 @@ struct AppConfig: Codable, Equatable {
     var externalMouseVendorID: Int
     var externalMouseProductID: Int
     var externalMouseName: String
+    // Off by default: unlike keyboard/mouse forwarding (explicit hotkey, visible
+    // in the menu), background clipboard sync copies content across Macs with
+    // no per-action confirmation — opt-in is the safer default.
+    var shareClipboard: Bool
 
     static let `default` = AppConfig(
         peerHostName: "",
@@ -75,22 +82,25 @@ struct AppConfig: Codable, Equatable {
         externalKeyboardName: "",
         externalMouseVendorID: 0,
         externalMouseProductID: 0,
-        externalMouseName: ""
+        externalMouseName: "",
+        shareClipboard: false
     )
 
-    // Custom decode so configs saved before device selection existed still load
-    // (new fields default to "auto-detect" instead of failing the whole decode).
+    // Custom decode so configs saved before device selection/clipboard existed
+    // still load (new fields default instead of failing the whole decode).
     enum CodingKeys: String, CodingKey {
         case peerHostName, peerAddress, pairingToken, isKeyboardOwner, thisMacName, listenPort
         case externalKeyboardVendorID, externalKeyboardProductID, externalKeyboardName
         case externalMouseVendorID, externalMouseProductID, externalMouseName
+        case shareClipboard
     }
 
     init(
         peerHostName: String, peerAddress: String, pairingToken: String, isKeyboardOwner: Bool,
         thisMacName: String, listenPort: UInt16,
         externalKeyboardVendorID: Int, externalKeyboardProductID: Int, externalKeyboardName: String,
-        externalMouseVendorID: Int, externalMouseProductID: Int, externalMouseName: String
+        externalMouseVendorID: Int, externalMouseProductID: Int, externalMouseName: String,
+        shareClipboard: Bool
     ) {
         self.peerHostName = peerHostName
         self.peerAddress = peerAddress
@@ -104,6 +114,7 @@ struct AppConfig: Codable, Equatable {
         self.externalMouseVendorID = externalMouseVendorID
         self.externalMouseProductID = externalMouseProductID
         self.externalMouseName = externalMouseName
+        self.shareClipboard = shareClipboard
     }
 
     init(from decoder: Decoder) throws {
@@ -120,6 +131,7 @@ struct AppConfig: Codable, Equatable {
         externalMouseVendorID = try c.decodeIfPresent(Int.self, forKey: .externalMouseVendorID) ?? 0
         externalMouseProductID = try c.decodeIfPresent(Int.self, forKey: .externalMouseProductID) ?? 0
         externalMouseName = try c.decodeIfPresent(String.self, forKey: .externalMouseName) ?? ""
+        shareClipboard = try c.decodeIfPresent(Bool.self, forKey: .shareClipboard) ?? false
     }
 }
 

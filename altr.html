@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Altr — Cross-functional AI skill management for the whole org</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ponytail: static brief, native CSS reflow handles resize — no Pretext apparatus needed for flowing prose + tables */
+  :root{
+    --ink:#17140f;
+    --ink-2:#4a453c;
+    --paper:#faf7f0;
+    --paper-2:#f2ede1;
+    --line:#ddd5c4;
+    --accent:#d6431c;
+    --accent-ink:#a8320f;
+    --good:#1c6b4a;
+    --mono:'IBM Plex Mono',ui-monospace,monospace;
+    --disp:'Space Grotesk',system-ui,sans-serif;
+    --body:'Inter',system-ui,sans-serif;
+    --maxw:1060px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--paper);color:var(--ink);
+    font-family:var(--body);font-size:17px;line-height:1.62;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px}
+  a{color:var(--accent-ink);text-decoration:none;border-bottom:1px solid var(--line)}
+  a:hover{border-color:var(--accent)}
+
+  /* eyebrow labels */
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent-ink);font-weight:500}
+  .sec-num{font-family:var(--mono);font-size:12px;color:var(--ink-2);letter-spacing:.1em}
+
+  h1,h2,h3{font-family:var(--disp);font-weight:600;line-height:1.08;letter-spacing:-.02em;margin:0}
+  h2{font-size:clamp(28px,4vw,42px);margin:0 0 18px}
+  h3{font-size:20px;letter-spacing:-.01em;margin:0 0 8px}
+  p{margin:0 0 16px}
+  .lead{font-size:19px;color:var(--ink-2)}
+
+  /* top bar */
+  header.nav{position:sticky;top:0;z-index:50;background:rgba(250,247,240,.86);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  .nav .wrap{display:flex;align-items:center;justify-content:space-between;height:58px}
+  .brand{font-family:var(--disp);font-weight:700;font-size:20px;letter-spacing:-.03em;border:none;color:var(--ink);display:flex;align-items:center;gap:9px}
+  .brand .dot{width:9px;height:9px;background:var(--accent);border-radius:50%;display:inline-block}
+  .nav nav{display:flex;gap:26px;font-family:var(--mono);font-size:12.5px;letter-spacing:.03em}
+  .nav nav a{color:var(--ink-2);border:none}
+  .nav nav a:hover{color:var(--accent-ink)}
+  @media(max-width:720px){.nav nav{display:none}}
+
+  /* hero */
+  .hero{padding:76px 0 60px;border-bottom:1px solid var(--line)}
+  .hero h1{font-size:clamp(44px,8vw,88px);font-weight:700;letter-spacing:-.04em;margin:0 0 6px}
+  .hero .sub{font-family:var(--disp);font-size:clamp(20px,3vw,30px);font-weight:500;color:var(--ink);max-width:20ch;letter-spacing:-.02em;line-height:1.12;margin:14px 0 26px}
+  .hero .tag{display:inline-block;font-family:var(--mono);font-size:13px;color:var(--ink-2);border:1px solid var(--line);border-radius:999px;padding:7px 14px}
+  .hero .meta{margin-top:30px;display:flex;gap:28px;flex-wrap:wrap;font-family:var(--mono);font-size:13px;color:var(--ink-2)}
+  .hero .meta b{color:var(--ink);font-weight:600}
+
+  section{padding:64px 0;border-bottom:1px solid var(--line)}
+  .sechead{display:flex;align-items:baseline;gap:16px;margin-bottom:30px}
+
+  /* stat row */
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .stat{background:var(--paper);padding:22px 20px}
+  .stat .n{font-family:var(--disp);font-size:34px;font-weight:700;letter-spacing:-.03em;line-height:1}
+  .stat .l{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);margin-top:8px;line-height:1.4;letter-spacing:.02em}
+  @media(max-width:820px){.stats{grid-template-columns:repeat(2,1fr)}}
+
+  /* generic grid */
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:26px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+  @media(max-width:820px){.grid2,.grid3{grid-template-columns:1fr}}
+
+  .card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:24px}
+  .card .k{font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent-ink);margin-bottom:10px}
+  .card p{margin:0;color:var(--ink-2);font-size:15.5px}
+  .card p+p{margin-top:10px}
+
+  /* tables */
+  table{width:100%;border-collapse:collapse;font-size:15px;margin-top:6px}
+  th,td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);font-weight:500}
+  td b{font-weight:600}
+  td.mono,.mono-cell{font-family:var(--mono);font-size:13.5px;white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  .tblwrap{border:1px solid var(--line);border-radius:12px;overflow:hidden;overflow-x:auto}
+  .tblwrap table{margin:0}
+  .tblwrap th{background:var(--paper-2)}
+
+  /* callout */
+  .callout{background:var(--ink);color:var(--paper);border-radius:14px;padding:30px 32px;margin-top:8px}
+  .callout .eyebrow{color:#f0a68e}
+  .callout h3{color:var(--paper);font-size:23px;margin-top:8px}
+  .callout p{color:#d8d2c6;margin-bottom:0}
+
+  .pill{font-family:var(--mono);font-size:11px;padding:3px 9px;border-radius:6px;background:var(--paper-2);border:1px solid var(--line);color:var(--ink-2);white-space:nowrap}
+  .pill.on{background:#eaf5ef;border-color:#bfe3d0;color:var(--good)}
+  .pill.warn{background:#fdeee9;border-color:#f3cbbc;color:var(--accent-ink)}
+
+  ul.clean{list-style:none;padding:0;margin:0}
+  ul.clean li{padding:10px 0 10px 24px;position:relative;border-bottom:1px solid var(--line);color:var(--ink-2);font-size:15.5px}
+  ul.clean li:last-child{border-bottom:none}
+  ul.clean li::before{content:"→";position:absolute;left:0;color:var(--accent);font-family:var(--mono)}
+  ul.clean li b{color:var(--ink);font-weight:600}
+
+  /* pricing */
+  .price{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+  @media(max-width:820px){.price{grid-template-columns:1fr}}
+  .tier{border:1px solid var(--line);border-radius:14px;padding:26px;background:var(--paper)}
+  .tier.mid{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .tier .t{font-family:var(--mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-2)}
+  .tier .amt{font-family:var(--disp);font-size:38px;font-weight:700;letter-spacing:-.03em;margin:8px 0 2px}
+  .tier .amt small{font-size:15px;font-weight:500;color:var(--ink-2)}
+  .tier ul{list-style:none;padding:0;margin:16px 0 0;font-size:14.5px;color:var(--ink-2)}
+  .tier li{padding:7px 0;border-top:1px solid var(--line)}
+
+  /* roadmap */
+  .phase{display:grid;grid-template-columns:120px 1fr;gap:22px;padding:20px 0;border-bottom:1px solid var(--line)}
+  .phase:last-child{border-bottom:none}
+  .phase .p{font-family:var(--mono);font-size:13px;color:var(--accent-ink);font-weight:600}
+  .phase .p span{display:block;color:var(--ink-2);font-weight:400;margin-top:4px;font-size:11.5px}
+  @media(max-width:640px){.phase{grid-template-columns:1fr;gap:8px}}
+
+  footer{padding:50px 0 70px;color:var(--ink-2)}
+  footer .wrap{display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px;font-family:var(--mono);font-size:12.5px}
+  .src{font-size:12.5px;color:var(--ink-2);font-family:var(--mono);line-height:1.9}
+  .src a{color:var(--ink-2)}
+</style>
+</head>
+<body>
+
+<header class="nav"><div class="wrap">
+  <span class="brand"><span class="dot"></span>Altr</span>
+  <nav>
+    <a href="#problem">Problem</a>
+    <a href="#market">Market</a>
+    <a href="#landscape">Landscape</a>
+    <a href="#product">Product</a>
+    <a href="#pricing">Pricing</a>
+    <a href="#roadmap">Roadmap</a>
+  </nav>
+</div></header>
+
+<div class="hero"><div class="wrap">
+  <span class="eyebrow">Product brief · 2026</span>
+  <h1>Altr</h1>
+  <div class="sub">Cross-functional AI skill management for the whole organization.</div>
+  <p class="lead" style="max-width:56ch">Create, version, and sync AI agent skills across every tool your company uses. Claude Code, Claude.ai, Cursor, Codex, ChatGPT. No Git knowledge required.</p>
+  <span class="tag">GitHub for your team's AI skills, without the Git</span>
+  <div class="meta">
+    <span><b>altr.run</b></span>
+    <span>Open standard native</span>
+    <span>Cross-vendor by design</span>
+    <span>AI writes the skills</span>
+  </div>
+</div></div>
+
+<!-- PROBLEM -->
+<section id="problem"><div class="wrap">
+  <div class="sechead"><span class="sec-num">01</span><span class="eyebrow">The problem</span></div>
+  <div class="grid2">
+    <div>
+      <h2>Everyone uses AI. Nobody shares how.</h2>
+      <p class="lead">A company's best prompts, SOPs, and agent instructions live in one person's head or a stale Google Doc. The moment someone improves how the team handles a task, that improvement reaches no one.</p>
+      <p>The skills exist. They just cannot travel. Not between people, not between the five AI tools each person already juggles, and definitely not to the non-technical majority who never touch Git.</p>
+    </div>
+    <div class="stats" style="grid-template-columns:1fr 1fr;align-self:start">
+      <div class="stat"><div class="n">75%</div><div class="l">of knowledge workers use genAI at work. 38% daily, up from 11% in 2024</div></div>
+      <div class="stat"><div class="n">70%</div><div class="l">of engineers run 2–4 AI tools at once. Fragmentation is the default</div></div>
+      <div class="stat"><div class="n">71%</div><div class="l">top use case is content creation, above code at 58%. This is not a dev problem</div></div>
+      <div class="stat"><div class="n">20–30%</div><div class="l">weekly usage of paid Copilot seats. Access without adoption is the real gap</div></div>
+    </div>
+  </div>
+</div></section>
+
+<!-- MARKET -->
+<section id="market"><div class="wrap">
+  <div class="sechead"><span class="sec-num">02</span><span class="eyebrow">The market</span></div>
+  <h2 style="max-width:18ch">A skill layer on a market growing 20%+ a year.</h2>
+  <div class="grid3" style="margin-bottom:26px">
+    <div class="card">
+      <div class="k">AI coding tools</div>
+      <p style="font-family:var(--disp);font-size:26px;font-weight:700;color:var(--ink);letter-spacing:-.02em">$10.3B → $42.8B</p>
+      <p>By 2033, 22.5% CAGR. The ecosystem Altr plugs into. Not the market, the tailwind.</p>
+    </div>
+    <div class="card">
+      <div class="k">LLMOps + governance</div>
+      <p style="font-family:var(--disp);font-size:26px;font-weight:700;color:var(--ink);letter-spacing:-.02em">$7.1B → $15.6B</p>
+      <p>By 2030, 21.6% CAGR. Where versioning, roles, and governance live. Altr's paid home.</p>
+    </div>
+    <div class="card">
+      <div class="k">Prompt / skill tooling</div>
+      <p style="font-family:var(--disp);font-size:26px;font-weight:700;color:var(--ink);letter-spacing:-.02em">$2.8B → $18.6B</p>
+      <p>By 2034, 23% CAGR. The closest adjacent category, and Altr's front door.</p>
+    </div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="n">20M+</div><div class="l">paid M365 Copilot seats. Added 5M in one quarter</div></div>
+    <div class="stat"><div class="n">7M+</div><div class="l">ChatGPT for Work seats, up 9x year over year</div></div>
+    <div class="stat"><div class="n">300k+</div><div class="l">Anthropic business customers</div></div>
+    <div class="stat"><div class="n">52%</div><div class="l">of enterprises already have formal genAI governance policies</div></div>
+  </div>
+  <p style="margin-top:22px;color:var(--ink-2);max-width:70ch">Tens of millions of paid enterprise AI seats exist today, growing fast. Even a thin skill-management layer at roughly $12 a seat maps to a market in the billions. Whole-org is the ceiling. The wedge is how you reach it.</p>
+</div></section>
+
+<!-- LANDSCAPE -->
+<section id="landscape"><div class="wrap">
+  <div class="sechead"><span class="sec-num">03</span><span class="eyebrow">Competitive landscape</span></div>
+  <h2 style="max-width:20ch">The format war is over. Build on the standard.</h2>
+  <p class="lead" style="max-width:64ch">Anthropic published Agent Skills as an open standard in December 2025. A skill is just a folder with a SKILL.md file. It is already adopted by 42+ tools across competing vendors.</p>
+
+  <div class="tblwrap" style="margin:22px 0">
+    <table>
+      <thead><tr><th>Category</th><th>Who</th><th>Versioning</th><th>Non-technical</th><th>Cross-vendor sync</th></tr></thead>
+      <tbody>
+        <tr><td><b>Open standard</b><br><span style="color:var(--ink-2);font-size:13px">Agent Skills, agentskills.io</span></td><td>Anthropic + 42 tools (Codex, Cursor, Copilot, Gemini CLI)</td><td><span class="pill on">Git-native</span></td><td><span class="pill warn">No</span></td><td><span class="pill warn">Format only</span></td></tr>
+        <tr><td><b>Skill CLIs / repos</b></td><td>vercel-labs/skills, marketplaces</td><td><span class="pill on">Git</span></td><td><span class="pill warn">No</span></td><td><span class="pill">Install, not sync</span></td></tr>
+        <tr><td><b>Prompt management</b></td><td>PromptHub ($15–20/seat)</td><td><span class="pill on">Yes, free tier</span></td><td><span class="pill warn">Dev-oriented</span></td><td><span class="pill warn">No</span></td></tr>
+        <tr><td><b>AI governance / DLP</b></td><td>TeamPrompt</td><td><span class="pill warn">Not shown</span></td><td><span class="pill on">Yes</span></td><td><span class="pill warn">Chat tools only</span></td></tr>
+        <tr><td><b>Platform-native</b></td><td>Anthropic org skills, GPT Store</td><td><span class="pill on">Yes</span></td><td><span class="pill on">Yes</span></td><td><span class="pill warn">Single-vendor</span></td></tr>
+        <tr><td style="color:var(--accent-ink)"><b>Altr</b></td><td>This brief</td><td><span class="pill on">Git under the hood</span></td><td><span class="pill on">AI-authored</span></td><td><span class="pill on">Yes</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid2" style="margin-top:4px">
+    <div class="card">
+      <div class="k">The ecosystem proves demand</div>
+      <p><b style="color:var(--ink)">superpowers</b> ~245k stars · <b style="color:var(--ink)">anthropics/skills</b> ~158k · <b style="color:var(--ink)">awesome-claude-skills</b> ~67k · <b style="color:var(--ink)">vercel-labs/skills</b> ~25k.</p>
+      <p>One repo alone ships 776 skills spanning marketing, product, finance, compliance, and C-level advisory. The appetite is not hypothetical.</p>
+    </div>
+    <div class="card">
+      <div class="k">But the content is trapped</div>
+      <p>Every one of those is a public GitHub repo. Git-native, developer-only, no team management, no non-technical access.</p>
+      <p>The CFO who would use <span class="mono-cell" style="font-size:13px">cfo-advisor</span> cannot install it from a folder. The content for cross-functional AI exists. The distribution for it does not.</p>
+    </div>
+  </div>
+</div></section>
+
+<!-- WEDGE -->
+<section id="wedge"><div class="wrap">
+  <div class="sechead"><span class="sec-num">04</span><span class="eyebrow">The wedge</span></div>
+  <div class="grid2">
+    <div>
+      <h2>Land with technical teams. Expand to the org.</h2>
+      <p class="lead">Whole-org is the vision and the TAM. You still enter through one sharp door, the way Slack, Notion, and Figma all did.</p>
+      <p>Technical teams already have the skills, already run multiple tools, and feel the pain daily. Start there. As the rest of the company adopts AI, the same library already spans them.</p>
+      <p>The one thing no platform vendor will build: sync <b>between</b> ecosystems. Anthropic syncs across Claude. OpenAI across theirs. Nobody carries your skills from Claude Code to Cursor to ChatGPT. That neutrality is the moat.</p>
+    </div>
+    <div class="callout">
+      <span class="eyebrow">The defensible position</span>
+      <h3>Cross-vendor, non-technical, versioned skill sync.</h3>
+      <p>No verified product combines all three. Versioning is table-stakes and given away free. The paid surface is management: private libraries, roles, approvals, and sync. You cannot charge for skills. You charge for order.</p>
+    </div>
+  </div>
+</div></section>
+
+<!-- PRODUCT -->
+<section id="product"><div class="wrap">
+  <div class="sechead"><span class="sec-num">05</span><span class="eyebrow">How it works</span></div>
+  <div class="grid2" style="margin-bottom:26px">
+    <div class="card"><div class="k">AI writes the skills</div><p>Nobody hand-writes YAML. Describe intent in plain language, Altr generates a spec-compliant skill. Select one, say "add an edge case," it improves. The two most-starred community skills are literally "a skill that writes skills." This is validated behavior.</p></div>
+    <div class="card"><div class="k">Git under the hood, invisible</div><p>Every save is a commit. Non-technical users see "v4 · Maya · yesterday" with one-click restore. Engineers get a real cloneable remote. Same library, two doors.</p></div>
+    <div class="card"><div class="k">Plugin / MCP for all agents</div><p>Altr ships as a meta-skill and MCP server inside the tools people already use. "Make me a skill for X" commits it and syncs it out. No web app required to start.</p></div>
+    <div class="card"><div class="k">Sync fan-out</div><p>Claude Code reads a marketplace URL, zero client software. A small sync agent writes into Cursor and Codex on disk. Export helpers cover Claude.ai and ChatGPT. Pull-only, manifest-based, no lock-in.</p></div>
+  </div>
+
+  <h3 style="margin-bottom:14px">Architecture</h3>
+  <div class="tblwrap">
+    <table>
+      <tbody>
+        <tr><td class="mono-cell" style="color:var(--accent-ink)">Web + API</td><td>Next.js on Vercel. Server-layer authz, no RLS reliance.</td></tr>
+        <tr><td class="mono-cell" style="color:var(--accent-ink)">Data</td><td>Supabase Postgres, metadata only. Storage for assets. The DB is a rebuildable index over Git.</td></tr>
+        <tr><td class="mono-cell" style="color:var(--accent-ink)">Auth</td><td>Auth.js, sole system, Supabase adapter. Google OAuth + email magic links.</td></tr>
+        <tr><td class="mono-cell" style="color:var(--accent-ink)">Git backend</td><td>Altr-hosted by default, or connect your own GitHub / GitLab / Bitbucket. Never runs on Vercel.</td></tr>
+        <tr><td class="mono-cell" style="color:var(--accent-ink)">Models</td><td>OpenRouter gateway (Claude + Gemini + GPT). BYOK default, capped managed quota on paid tiers.</td></tr>
+        <tr><td class="mono-cell" style="color:var(--accent-ink)">Sync agent</td><td>Go, single static binary, menu-bar. MIT-licensed for trust and distribution.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:16px;color:var(--ink-2);max-width:70ch"><b style="color:var(--ink)">The invariant:</b> drop the entire database, rebuild from the Git backends, lose nothing but derived indexes. The repo is always the source of truth. That is what makes "no lock-in" a feature, not a promise.</p>
+</div></section>
+
+<!-- PRICING -->
+<section id="pricing"><div class="wrap">
+  <div class="sechead"><span class="sec-num">06</span><span class="eyebrow">Pricing</span></div>
+  <h2 style="max-width:22ch">Free where the standard is. Paid where the team is.</h2>
+  <div class="price" style="margin-top:24px">
+    <div class="tier">
+      <div class="t">Free</div>
+      <div class="amt">$0</div>
+      <ul>
+        <li>1 library, 3 members</li>
+        <li>Unlimited public skills</li>
+        <li>10 private skills</li>
+        <li>Full versioning</li>
+        <li>All sync targets · BYOK</li>
+      </ul>
+    </div>
+    <div class="tier mid">
+      <div class="t" style="color:var(--accent-ink)">Team · most teams</div>
+      <div class="amt">$12<small> / seat / mo</small></div>
+      <ul>
+        <li>Unlimited private skills</li>
+        <li>Roles + approvals</li>
+        <li>Activity feed, priority sync</li>
+        <li>Managed model quota</li>
+        <li>$10/seat billed annually</li>
+      </ul>
+    </div>
+    <div class="tier">
+      <div class="t">Business · later</div>
+      <div class="amt">~$25<small> / seat / mo</small></div>
+      <ul>
+        <li>SSO / SAML</li>
+        <li>Audit log</li>
+        <li>Usage analytics</li>
+        <li>Self-hosted sync relay</li>
+      </ul>
+    </div>
+  </div>
+  <p style="margin-top:20px;color:var(--ink-2);max-width:70ch">PromptHub anchors the category at $15–20 a seat with versioning free on every tier. Altr undercuts for the 5–50 seat beachhead and monetizes collaboration, control, and zero-config AI, not the skills themselves.</p>
+</div></section>
+
+<!-- ROADMAP -->
+<section id="roadmap"><div class="wrap">
+  <div class="sechead"><span class="sec-num">07</span><span class="eyebrow">Roadmap</span></div>
+  <h2 style="max-width:20ch">Prove the loop before you build the dashboard.</h2>
+  <div style="margin-top:20px">
+    <div class="phase">
+      <div class="p">v0<span>~2–3 weeks</span></div>
+      <div>
+        <h3>MCP + skill, no web app</h3>
+        <p style="color:var(--ink-2);margin:0">Git backend, AI-authoring engine, meta-skill + MCP, Claude Code marketplace endpoint, CLI. Ship to 10–15 design partners. Gate: does create → version → sync hold before anything else gets built?</p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="p">v1<span>~6 weeks</span></div>
+      <div>
+        <h3>The web app platform</h3>
+        <p style="color:var(--ink-2);margin:0">AI-generate panel, editor, version history, import, sync agent, teams, roles, playground, billing. This is where the non-technical buyer lives.</p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="p">v2<span>needs users</span></div>
+      <div>
+        <h3>Skill marketplace</h3>
+        <p style="color:var(--ink-2);margin:0">Curated + community submission, one-click add, Skill Curator role. A growth asset, not a vendor competitor. Sequenced after the core loop, because an empty store is worse than none.</p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="p">now<span>this week</span></div>
+      <div>
+        <h3>Start the blog + socials</h3>
+        <p style="color:var(--ink-2);margin:0">Teaching "how to write awesome skills" is top-of-funnel, SEO, and demand validation in one. Runs parallel to the build. The gap was inferred from competitor absence, not proven demand. This is how you prove it cheaply.</p>
+      </div>
+    </div>
+  </div>
+</div></section>
+
+<!-- RISK -->
+<section id="risk"><div class="wrap">
+  <div class="sechead"><span class="sec-num">08</span><span class="eyebrow">Risks &amp; tripwires</span></div>
+  <div class="grid2">
+    <div>
+      <h2 style="max-width:16ch">The threat is platform absorption.</h2>
+      <p class="lead" style="max-width:52ch">Anthropic plans the full skill lifecycle natively and already ships org-admin deployment. That is the single biggest risk, and it is worth watching monthly.</p>
+      <p>The defensible zone stays cross-vendor. Anthropic will not carry your skills to Cursor and ChatGPT. That is the line to hold.</p>
+    </div>
+    <ul class="clean" style="align-self:start">
+      <li><b>Anthropic ships cross-tool sync</b> → pivot weight to governance and non-Anthropic tools</li>
+      <li><b>Agent Skills moves under the Linux Foundation</b> → become the best-managed host, not a competitor</li>
+      <li><b>OpenAI or Cursor ship team libraries</b> → double down on cross-vendor neutrality</li>
+      <li><b>Low technical moat, format is just files</b> → moat is speed, breadth, non-technical UX, network effect</li>
+      <li><b>Demand unproven</b> → if the v0 gate misses, do not build v1. Re-scope or stop</li>
+    </ul>
+  </div>
+</div></section>
+
+<footer><div class="wrap">
+  <div>
+    <div class="src">
+      Sources · Agent Skills open standard (agentskills.io, anthropic.com, Dec 2025) · Agentic AI Foundation, Linux Foundation<br>
+      Market: Grand View, Nat Law Review (LLMOps), Technavio · Copilot &amp; ChatGPT seats: Value Add VC, aibusinessweekly · Adoption: Omniflow, Medha, toolfountain<br>
+      Ecosystem: github.com/anthropics/skills, obra/superpowers, vercel-labs/skills · Pricing: prompthub.us
+    </div>
+  </div>
+  <div style="text-align:right"><span class="brand" style="justify-content:flex-end"><span class="dot"></span>Altr</span><br><span style="color:var(--ink-2)">altr.run · product brief 2026</span></div>
+</div></footer>
+
+</body>
+</html>
