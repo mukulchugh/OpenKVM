@@ -11,6 +11,7 @@ struct MousePayload: Sendable {
     var scrollDX: Int64 = 0
     var scrollDY: Int64 = 0
     var button: Int64 = 0
+    var flags: UInt64 = 0
 }
 
 /// Captures keyboard + mouse from a specific EXTERNAL device (via HIDInputCapture,
@@ -54,21 +55,21 @@ final class InputBridge: ObservableObject {
             guard InputBridge.shared.isForwardingSnapshot else { return }
             PeerNetwork.shared.sendKeyEvent(keyCode: keyCode, keyDown: down, flags: flags, isFlagsChanged: isModifier)
         }
-        hid.onMouseDeltaX = { dx in
+        hid.onMouseDeltaX = { dx, flags in
             guard InputBridge.shared.isForwardingSnapshot else { return }
-            PeerNetwork.shared.sendMouseEvent(MousePayload(kind: "move", dx: dx, dy: 0))
+            PeerNetwork.shared.sendMouseEvent(MousePayload(kind: "move", dx: dx, dy: 0, flags: flags))
         }
-        hid.onMouseDeltaY = { dy in
+        hid.onMouseDeltaY = { dy, flags in
             guard InputBridge.shared.isForwardingSnapshot else { return }
-            PeerNetwork.shared.sendMouseEvent(MousePayload(kind: "move", dx: 0, dy: dy))
+            PeerNetwork.shared.sendMouseEvent(MousePayload(kind: "move", dx: 0, dy: dy, flags: flags))
         }
-        hid.onMouseButton = { kind, button in
+        hid.onMouseButton = { kind, button, flags in
             guard InputBridge.shared.isForwardingSnapshot else { return }
-            PeerNetwork.shared.sendMouseEvent(MousePayload(kind: kind, button: button))
+            PeerNetwork.shared.sendMouseEvent(MousePayload(kind: kind, button: button, flags: flags))
         }
-        hid.onScroll = { sx, sy in
+        hid.onScroll = { sx, sy, flags in
             guard InputBridge.shared.isForwardingSnapshot else { return }
-            PeerNetwork.shared.sendMouseEvent(MousePayload(kind: "scroll", scrollDX: sx, scrollDY: sy))
+            PeerNetwork.shared.sendMouseEvent(MousePayload(kind: "scroll", scrollDX: sx, scrollDY: sy, flags: flags))
         }
         hid.onMediaKey = { nxKeyType, down in
             guard InputBridge.shared.isForwardingSnapshot else { return }
@@ -396,16 +397,18 @@ final class InputBridge: ObservableObject {
             if let e = CGEvent(mouseEventSource: injectSource, mouseType: moveType, mouseCursorPosition: p, mouseButton: btn) {
                 e.setIntegerValueField(.mouseEventDeltaX, value: Int64(m.dx))
                 e.setIntegerValueField(.mouseEventDeltaY, value: Int64(m.dy))
+                e.flags = CGEventFlags(rawValue: m.flags) // ported from Deskflow's "fix for sticky keys"
                 e.post(tap: .cghidEventTap)
             }
-        case "leftDown":  leftDown = true;  postButton(.leftMouseDown, .left)
-        case "leftUp":    leftDown = false; postButton(.leftMouseUp, .left)
-        case "rightDown": rightDown = true;  postButton(.rightMouseDown, .right)
-        case "rightUp":   rightDown = false; postButton(.rightMouseUp, .right)
-        case "otherDown": otherDown = true;  postButton(.otherMouseDown, CGMouseButton(rawValue: UInt32(m.button)) ?? .center)
-        case "otherUp":   otherDown = false; postButton(.otherMouseUp, CGMouseButton(rawValue: UInt32(m.button)) ?? .center)
+        case "leftDown":  leftDown = true;  postButton(.leftMouseDown, .left, m.flags)
+        case "leftUp":    leftDown = false; postButton(.leftMouseUp, .left, m.flags)
+        case "rightDown": rightDown = true;  postButton(.rightMouseDown, .right, m.flags)
+        case "rightUp":   rightDown = false; postButton(.rightMouseUp, .right, m.flags)
+        case "otherDown": otherDown = true;  postButton(.otherMouseDown, CGMouseButton(rawValue: UInt32(m.button)) ?? .center, m.flags)
+        case "otherUp":   otherDown = false; postButton(.otherMouseUp, CGMouseButton(rawValue: UInt32(m.button)) ?? .center, m.flags)
         case "scroll":
             if let e = CGEvent(scrollWheelEvent2Source: injectSource, units: .pixel, wheelCount: 2, wheel1: Int32(m.scrollDY), wheel2: Int32(m.scrollDX), wheel3: 0) {
+                e.flags = CGEventFlags(rawValue: m.flags)
                 e.post(tap: .cghidEventTap)
             }
         default:
@@ -431,10 +434,11 @@ final class InputBridge: ObservableObject {
         return true
     }
 
-    nonisolated private func postButton(_ type: CGEventType, _ button: CGMouseButton) {
+    nonisolated private func postButton(_ type: CGEventType, _ button: CGMouseButton, _ flags: UInt64) {
         let p = injectedCursor ?? currentCursor()
         injectedCursor = p
         if let e = CGEvent(mouseEventSource: injectSource, mouseType: type, mouseCursorPosition: p, mouseButton: button) {
+            e.flags = CGEventFlags(rawValue: flags)
             e.post(tap: .cghidEventTap)
         }
     }

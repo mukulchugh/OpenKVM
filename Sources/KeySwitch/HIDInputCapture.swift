@@ -109,10 +109,15 @@ final class HIDInputCapture {
     var onKeyEvent: ((UInt16, Bool, UInt64, Bool) -> Void)?
     /// Media/function-row key from the Consumer usage page: NX_KEYTYPE, keyDown.
     var onMediaKey: ((Int32, Bool) -> Void)?
-    var onMouseDeltaX: ((Double) -> Void)?
-    var onMouseDeltaY: ((Double) -> Void)?
-    var onMouseButton: ((String, Int64) -> Void)?
-    var onScroll: ((Int64, Int64) -> Void)?
+    // dx/dy/scroll/button all carry current CGEventFlags — modifier state (shift/
+    // cmd/etc, held on the keyboard) so shift-click/cmd-click multi-select and
+    // option-drag work correctly on the receiver. Ported from Deskflow's
+    // "Fix for sticky keys": synthesized mouse events need explicit flags too,
+    // not just synthesized key events.
+    var onMouseDeltaX: ((Double, UInt64) -> Void)?
+    var onMouseDeltaY: ((Double, UInt64) -> Void)?
+    var onMouseButton: ((String, Int64, UInt64) -> Void)?
+    var onScroll: ((Int64, Int64, UInt64) -> Void)?
 
     /// HID capture runs on a dedicated, elevated-priority thread with its own
     /// CFRunLoop — NOT the main run loop. Scheduling on CFRunLoopGetMain() (the
@@ -313,17 +318,17 @@ final class HIDInputCapture {
 
         if usagePage == hidPageGenericDesktop {
             switch usage {
-            case hidUsageGDX: onMouseDeltaX?(Double(intValue))
-            case hidUsageGDY: onMouseDeltaY?(Double(intValue))
-            case hidUsageGDWheel: onScroll?(0, Int64(intValue))
+            case hidUsageGDX: onMouseDeltaX?(Double(intValue), currentFlags)
+            case hidUsageGDY: onMouseDeltaY?(Double(intValue), currentFlags)
+            case hidUsageGDWheel: onScroll?(0, Int64(intValue), currentFlags)
             default: break
             }
         } else if usagePage == hidPageButton {
             let down = intValue != 0
             switch usage {
-            case 1: onMouseButton?(down ? "leftDown" : "leftUp", 0)
-            case 2: onMouseButton?(down ? "rightDown" : "rightUp", 0)
-            default: onMouseButton?(down ? "otherDown" : "otherUp", Int64(usage) - 1)
+            case 1: onMouseButton?(down ? "leftDown" : "leftUp", 0, currentFlags)
+            case 2: onMouseButton?(down ? "rightDown" : "rightUp", 0, currentFlags)
+            default: onMouseButton?(down ? "otherDown" : "otherUp", Int64(usage) - 1, currentFlags)
             }
         }
     }

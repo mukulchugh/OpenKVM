@@ -2,7 +2,27 @@
 
 macOS menu bar app that forwards a physical keyboard and mouse from one Mac to another over the local network.
 
-The Mac with the hardware attached captures keystrokes and pointer events, sends them to your other Mac over TCP, and replays them there. Toggle control with **⌘⇧K** or the menu bar — the hotkey always works locally so you are never locked out.
+The Mac with the hardware attached captures keystrokes and pointer events, sends them to your other Mac over TCP/UDP, and replays them there. Toggle control with **⌘⇧K** or the menu bar — the hotkey always works locally so you are never locked out.
+
+## Why not Universal Control?
+
+Apple already ships this for free between two Macs — [Universal Control](https://support.apple.com/en-us/102459) is supposed to just work. In practice it's unreliable for a lot of people, and that's the gap KeySwitch fills:
+
+| Universal Control requirement | Why it breaks |
+|---|---|
+| Same Apple ID + 2FA on both Macs | A work Mac + personal Mac won't work together |
+| Same Wi‑Fi network | Guest networks, VLANs, mesh nodes often block it |
+| Handoff enabled | Easy to miss on one machine |
+| No firewall/VPN interference | Blocks the connection outright |
+| Mac must not be asleep | Link drops, needs manual reconnection |
+| Correct display arrangement | Cursor has to exit the exact right screen edge |
+| Recent macOS version | Broke for many users after macOS Ventura 13.3 |
+
+Real reports of it failing: [MacRumors troubleshooting thread](https://forums.macrumors.com/threads/universal-control-not-working-heres-how-to-fix-it.2334383/), [r/apple PSA](https://www.reddit.com/r/apple/comments/tf488r/psa_fixing_universal_control_if_it_doesnt_work/), [MacPowerUsers forum](https://talk.macpowerusers.com/t/problem-with-universal-control-between-two-macs/33718), [Ask Different](https://apple.stackexchange.com/questions/444934/universal-control-not-working-on-two-macbook-pros).
+
+KeySwitch doesn't depend on Handoff, iCloud, or the same Apple ID — it's a plain TCP/UDP connection over Bonjour with its own pairing token. More setup than Universal Control when Universal Control works; more reliable when it doesn't.
+
+**If Universal Control works for you, use it — it's free and built in.** KeySwitch is for the case where it doesn't: different Apple IDs (work + personal Mac), a flaky network, or you just want an explicit hotkey instead of edge-scroll.
 
 ## Requirements
 
@@ -110,8 +130,9 @@ Use **Test connection** (Advanced) to verify reachability.
 
 | Component | Role |
 |-----------|------|
-| **InputBridge** | CGEvent tap (capture) and CGEvent injection (replay) |
-| **PeerNetwork** | TCP listener, Bonjour discovery (`_keyswitch._tcp`), wire protocol |
+| **HIDInputCapture** | IOKit HID Manager capture from one specific external keyboard + mouse (never the built-in trackpad/keyboard) |
+| **InputBridge** | Orchestrates capture/injection, hotkey, media keys, CGEvent replay on the receiver |
+| **PeerNetwork** | TCP (keys/buttons) + UDP (mouse move/scroll) listener, Bonjour discovery (`_keyswitch._tcp`), wire protocol |
 | **ConfigStore** | Persists pairing token, peer, owner flag in UserDefaults |
 | **SettingsView** | SwiftUI settings: pairing, permissions, diagnostics |
 

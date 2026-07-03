@@ -38,6 +38,7 @@ final class PeerNetwork: ObservableObject {
     nonisolated(unsafe) private var pendingScrollDY: Int64 = 0
     nonisolated(unsafe) private var hasPendingMove = false
     nonisolated(unsafe) private var hasPendingScroll = false
+    nonisolated(unsafe) private var pendingFlags: UInt64 = 0 // latest modifier state seen this window
     nonisolated(unsafe) private var trailingArmed = false
     // Leading-edge throttle: the first move after idle sends instantly (native
     // latency); rapid follow-ups within this window coalesce into one packet.
@@ -234,7 +235,8 @@ final class PeerNetwork: ObservableObject {
             if let kind = m.mouseKind {
                 InputBridge.shared.injectMouse(MousePayload(
                     kind: kind, dx: m.dx ?? 0, dy: m.dy ?? 0,
-                    scrollDX: m.scrollDX ?? 0, scrollDY: m.scrollDY ?? 0, button: m.button ?? 0))
+                    scrollDX: m.scrollDX ?? 0, scrollDY: m.scrollDY ?? 0, button: m.button ?? 0,
+                    flags: m.flags ?? 0))
             }
             return true
         default:
@@ -296,7 +298,8 @@ final class PeerNetwork: ObservableObject {
                     dy: message.dy ?? 0,
                     scrollDX: message.scrollDX ?? 0,
                     scrollDY: message.scrollDY ?? 0,
-                    button: message.button ?? 0
+                    button: message.button ?? 0,
+                    flags: message.flags ?? 0
                 ))
             }
             receiveNext(on: connection)
@@ -491,12 +494,12 @@ final class PeerNetwork: ObservableObject {
         switch m.kind {
         case "move":
             queue.async { [self] in
-                pendingDX += m.dx; pendingDY += m.dy; hasPendingMove = true
+                pendingDX += m.dx; pendingDY += m.dy; hasPendingMove = true; pendingFlags = m.flags
                 schedulePumpOnQueue()
             }
         case "scroll":
             queue.async { [self] in
-                pendingScrollDX += m.scrollDX; pendingScrollDY += m.scrollDY; hasPendingScroll = true
+                pendingScrollDX += m.scrollDX; pendingScrollDY += m.scrollDY; hasPendingScroll = true; pendingFlags = m.flags
                 schedulePumpOnQueue()
             }
         default: // buttons: flush pending move/scroll for ordering, then send now
@@ -505,6 +508,7 @@ final class PeerNetwork: ObservableObject {
                 var message = PeerMessage(action: .mouseEvent, hostName: fwdHost, token: fwdToken, setupStatus: nil)
                 message.mouseKind = m.kind
                 message.button = m.button
+                message.flags = m.flags
                 emitOnQueue(message)
             }
         }
@@ -533,14 +537,14 @@ final class PeerNetwork: ObservableObject {
             let dx = pendingDX, dy = pendingDY
             pendingDX = 0; pendingDY = 0; hasPendingMove = false
             var message = PeerMessage(action: .mouseEvent, hostName: fwdHost, token: fwdToken, setupStatus: nil)
-            message.mouseKind = "move"; message.dx = dx; message.dy = dy
+            message.mouseKind = "move"; message.dx = dx; message.dy = dy; message.flags = pendingFlags
             emitUDP(message)
         }
         if hasPendingScroll {
             let sx = pendingScrollDX, sy = pendingScrollDY
             pendingScrollDX = 0; pendingScrollDY = 0; hasPendingScroll = false
             var message = PeerMessage(action: .mouseEvent, hostName: fwdHost, token: fwdToken, setupStatus: nil)
-            message.mouseKind = "scroll"; message.scrollDX = sx; message.scrollDY = sy
+            message.mouseKind = "scroll"; message.scrollDX = sx; message.scrollDY = sy; message.flags = pendingFlags
             emitUDP(message)
         }
     }
