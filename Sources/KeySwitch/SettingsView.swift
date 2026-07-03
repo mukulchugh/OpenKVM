@@ -42,6 +42,24 @@ struct SettingsView: View {
                     }
                 }
 
+                if configStore.config.isKeyboardOwner {
+                    Picker("Keyboard", selection: keyboardSelectionBinding) {
+                        Text(bridge.resolvedKeyboard.map { "Auto: \($0.name)" } ?? "Auto-detect (none found)").tag("")
+                        ForEach(bridge.availableKeyboards.filter { !$0.isBuiltIn }) { kb in
+                            Text(kb.name).tag(kb.id)
+                        }
+                    }
+                    Picker("Mouse", selection: mouseSelectionBinding) {
+                        Text(bridge.resolvedMouse.map { "Auto: \($0.name)" } ?? "Auto-detect (none found)").tag("")
+                        ForEach(bridge.availableMice.filter { !$0.isBuiltIn }) { m in
+                            Text(m.name).tag(m.id)
+                        }
+                    }
+                    Text("Only this external keyboard/mouse are captured while forwarding — the built-in trackpad and keyboard on both Macs always keep working.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
                 if configStore.config.isKeyboardOwner && bridge.canCapture && isPaired {
                     HStack {
                         Button(bridge.isForwarding ? "Take control back" : "Control \(peerDisplayName)") {
@@ -145,10 +163,11 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420, height: 410)
+        .frame(width: 420, height: 470)
         .onAppear {
             startAtLogin = LoginItem.isEnabled
             bridge.refreshPermissions()
+            bridge.refreshDeviceList()
             restartNetwork()
             if isPaired {
                 Task { await network.fetchPeerSetupStatus(config: configStore.config) }
@@ -156,6 +175,40 @@ struct SettingsView: View {
         }
         .onChange(of: configStore.config.thisMacName) { _ in restartNetwork() }
         .onChange(of: configStore.config.listenPort) { _ in restartNetwork() }
+    }
+
+    private var keyboardSelectionBinding: Binding<String> {
+        Binding(
+            get: {
+                let cfg = configStore.config
+                return (cfg.externalKeyboardVendorID != 0 || cfg.externalKeyboardProductID != 0)
+                    ? "\(cfg.externalKeyboardVendorID):\(cfg.externalKeyboardProductID)" : ""
+            },
+            set: { newValue in
+                if newValue.isEmpty {
+                    bridge.selectKeyboard(nil)
+                } else if let info = bridge.availableKeyboards.first(where: { $0.id == newValue }) {
+                    bridge.selectKeyboard(info)
+                }
+            }
+        )
+    }
+
+    private var mouseSelectionBinding: Binding<String> {
+        Binding(
+            get: {
+                let cfg = configStore.config
+                return (cfg.externalMouseVendorID != 0 || cfg.externalMouseProductID != 0)
+                    ? "\(cfg.externalMouseVendorID):\(cfg.externalMouseProductID)" : ""
+            },
+            set: { newValue in
+                if newValue.isEmpty {
+                    bridge.selectMouse(nil)
+                } else if let info = bridge.availableMice.first(where: { $0.id == newValue }) {
+                    bridge.selectMouse(info)
+                }
+            }
+        )
     }
 
     private var peerDisplayName: String {

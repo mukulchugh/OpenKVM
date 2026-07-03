@@ -1,8 +1,6 @@
 import ApplicationServices
 import Cocoa
 
-private let hotkeyKeyCode: CGKeyCode = 40 // 'K'
-
 /// A portable mouse action sent over the wire. Movement is a relative delta so it
 /// works regardless of the two Macs' differing screen sizes and cursor positions.
 struct MousePayload: Sendable {
@@ -14,35 +12,69 @@ struct MousePayload: Sendable {
     var button: Int64 = 0
 }
 
-/// Captures every keystroke on the Mac the physical keyboard is attached to (the
-/// "owner") and forwards it to the peer Mac over PeerNetwork instead of letting it
-/// reach local apps. The peer replays the events with CGEvent injection. A fixed
-/// global hotkey (⌘⇧K) toggles forwarding on/off and is always handled locally,
-/// even while forwarding, so the user is never locked out of the owner Mac.
+/// Captures keyboard + mouse from a specific EXTERNAL device (via HIDInputCapture,
+/// picked by vendor/product ID — see Settings) and forwards it to the peer Mac.
+/// The built-in trackpad and keyboard are never opened by this class, so they
+/// always keep working locally, on both Macs, whether forwarding is on or off.
+/// ⌘⇧K from the selected external keyboard toggles forwarding and is always
+/// handled locally, so the user is never locked out of the owner Mac.
 @MainActor
 final class InputBridge: ObservableObject {
     static let shared = InputBridge()
     static let hotkeyDisplay = "⌘⇧K"
 
     @Published private(set) var isForwarding = false
-    @Published private(set) var canCapture = false // Accessibility + Input Monitoring
-    @Published private(set) var canPost = false    // synthesize events on this Mac
+    @Published private(set) var canCapture = false // permissions + external keyboard monitor active
+    @Published private(set) var canPost = false     // synthesize events on this Mac
     @Published private(set) var isReceivingFromPeer = false
+    @Published private(set) var availableKeyboards: [HIDDeviceInfo] = []
+    @Published private(set) var availableMice: [HIDDeviceInfo] = []
     @Published var lastMessage: String?
 
-    private var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
-    private var receivingResetTask: Task<Void, Never>?
     private var promptedForPermissions = false
+    private let hid = HIDInputCapture.shared
 
-    private init() {}
+    private init() {
+        hid.onHotkey = { [weak self] in
+            Task { @MainActor in await self?.toggleForwarding() }
+        }
+        hid.onKeyEvent = { keyCode, down, flags, isModifier in
+            guard InputBridge.shared.isForwardingSnapshot else { return }
+            PeerNetwork.shared.sendKeyEvent(keyCode: keyCode, keyDown: down, flags: flags, isFlagsChanged: isModifier)
+        }
+        hid.onMouseDeltaX = { dx in
+            guard InputBridge.shared.isForwardingSnapshot else { return }
+            PeerNetwork.shared.sendMouseEvent(MousePayload(kind: "move", dx: dx, dy: 0))
+        }
+        hid.onMouseDeltaY = { dy in
+            guard InputBridge.shared.isForwardingSnapshot else { return }
+            PeerNetwork.shared.sendMouseEvent(MousePayload(kind: "move", dx: 0, dy: dy))
+        }
+        hid.onMouseButton = { kind, button in
+            guard InputBridge.shared.isForwardingSnapshot else { return }
+            PeerNetwork.shared.sendMouseEvent(MousePayload(kind: kind, button: button))
+        }
+        hid.onScroll = { sx, sy in
+            guard InputBridge.shared.isForwardingSnapshot else { return }
+            PeerNetwork.shared.sendMouseEvent(MousePayload(kind: "scroll", scrollDX: sx, scrollDY: sy))
+        }
+    }
+
+    /// Read from a non-isolated HID callback context. Safe: only ever written on
+    /// the main thread, and HID callbacks are scheduled on the main run loop.
+    private nonisolated var isForwardingSnapshot: Bool {
+        MainActor.assumeIsolated { isForwarding }
+    }
+
+    // MARK: - Permissions
 
     /// macOS tracks three separate TCC permissions here: Accessibility,
-    /// Input Monitoring (kTCCServiceListenEvent, needed to capture), and
-    /// PostEvent (needed to inject). AXIsProcessTrusted() only covers the first —
-    /// the CG preflight/request APIs are the correct checks for the other two.
+    /// Input Monitoring (needed to open/monitor HID devices), and PostEvent
+    /// (needed to inject). AXIsProcessTrusted() only covers the first — the CG
+    /// preflight/request APIs are the correct checks for the other two.
     func refreshPermissions() {
-        canCapture = CGPreflightListenEventAccess() && AXIsProcessTrusted()
+        let permsOK = CGPreflightListenEventAccess() && AXIsProcessTrusted()
+        canCapture = permsOK && hid.hasKeyboardMonitor
         canPost = CGPreflightPostEventAccess()
         canPostCached = canPost
         refreshDisplayBounds()
@@ -60,182 +92,103 @@ final class InputBridge: ObservableObject {
         if !canPost {
             _ = CGRequestPostEventAccess()
         }
-        if !canCapture {
+        if !CGPreflightListenEventAccess() || !AXIsProcessTrusted() {
             _ = CGRequestListenEventAccess()
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options)
         }
-        refreshPermissions()
-        // If we now have permission (e.g. granted via System Settings), try to activate capture
-        if ConfigStore.shared.config.isKeyboardOwner && canCapture {
-            installTapIfNeeded()
+        if ConfigStore.shared.config.isKeyboardOwner {
+            startKeyboardMonitorIfNeeded()
         }
+        refreshPermissions()
     }
 
-    // MARK: - Owner side (capture + forward)
+    // MARK: - Owner side (device selection + capture)
 
     func updateOwnerState() {
         if ConfigStore.shared.config.isKeyboardOwner {
-            installTapIfNeeded()
+            startKeyboardMonitorIfNeeded()
         } else {
-            removeTap()
+            hid.stopKeyboardMonitor()
+            canCapture = false
             if isForwarding {
                 Task { await toggleForwarding() }
             }
         }
     }
 
-    /// Call this from Refresh or after user indicates permissions were granted externally.
-    /// Removes any existing tap (to clear stale state) and re-attempts creation.
+    /// Call from Refresh or after permissions/devices change externally.
     func forceReinstallTap() {
-        removeTap()
+        hid.stopKeyboardMonitor()
         refreshPermissions()
         if ConfigStore.shared.config.isKeyboardOwner {
-            installTapIfNeeded()
+            startKeyboardMonitorIfNeeded()
         }
     }
 
-    private func installTapIfNeeded() {
-        refreshPermissions()
-        guard eventTap == nil else { return }
+    func refreshDeviceList() {
+        let (keyboards, mice) = hid.listDevices()
+        availableKeyboards = keyboards
+        availableMice = mice
+    }
 
-        let mask: CGEventMask =
-            (1 << CGEventType.keyDown.rawValue) |
-            (1 << CGEventType.keyUp.rawValue) |
-            (1 << CGEventType.flagsChanged.rawValue) |
-            (1 << CGEventType.mouseMoved.rawValue) |
-            (1 << CGEventType.leftMouseDown.rawValue) |
-            (1 << CGEventType.leftMouseUp.rawValue) |
-            (1 << CGEventType.leftMouseDragged.rawValue) |
-            (1 << CGEventType.rightMouseDown.rawValue) |
-            (1 << CGEventType.rightMouseUp.rawValue) |
-            (1 << CGEventType.rightMouseDragged.rawValue) |
-            (1 << CGEventType.otherMouseDown.rawValue) |
-            (1 << CGEventType.otherMouseUp.rawValue) |
-            (1 << CGEventType.otherMouseDragged.rawValue) |
-            (1 << CGEventType.scrollWheel.rawValue)
+    /// nil = auto-detect (first non-built-in device found).
+    func selectKeyboard(_ info: HIDDeviceInfo?) {
+        ConfigStore.shared.config.externalKeyboardVendorID = info?.vendorID ?? 0
+        ConfigStore.shared.config.externalKeyboardProductID = info?.productID ?? 0
+        ConfigStore.shared.config.externalKeyboardName = info?.name ?? ""
+        startKeyboardMonitorIfNeeded()
+    }
 
-        guard let tap = CGEvent.tapCreate(
-            // HID-level tap: returning nil here suppresses the event before the
-            // window server moves the cursor, so the owner's pointer actually
-            // freezes while forwarding. Session-level taps see moves too late.
-            tap: .cghidEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: mask,
-            callback: { _, type, event, refcon in
-                guard let refcon else { return Unmanaged.passRetained(event) }
-                let bridge = Unmanaged<InputBridge>.fromOpaque(refcon).takeUnretainedValue()
-                return bridge.handle(type: type, event: event)
-            },
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        ) else {
+    func selectMouse(_ info: HIDDeviceInfo?) {
+        ConfigStore.shared.config.externalMouseVendorID = info?.vendorID ?? 0
+        ConfigStore.shared.config.externalMouseProductID = info?.productID ?? 0
+        ConfigStore.shared.config.externalMouseName = info?.name ?? ""
+    }
+
+    var resolvedKeyboard: HIDDeviceInfo? {
+        let cfg = ConfigStore.shared.config
+        if cfg.externalKeyboardVendorID != 0 || cfg.externalKeyboardProductID != 0,
+           let match = availableKeyboards.first(where: { $0.vendorID == cfg.externalKeyboardVendorID && $0.productID == cfg.externalKeyboardProductID }) {
+            return match
+        }
+        return hid.firstExternal(in: availableKeyboards)
+    }
+
+    var resolvedMouse: HIDDeviceInfo? {
+        let cfg = ConfigStore.shared.config
+        if cfg.externalMouseVendorID != 0 || cfg.externalMouseProductID != 0,
+           let match = availableMice.first(where: { $0.vendorID == cfg.externalMouseVendorID && $0.productID == cfg.externalMouseProductID }) {
+            return match
+        }
+        return hid.firstExternal(in: availableMice)
+    }
+
+    private func startKeyboardMonitorIfNeeded() {
+        refreshDeviceList()
+        guard CGPreflightListenEventAccess() && AXIsProcessTrusted() else {
             canCapture = false
-            lastMessage = "Event tap creation failed. If you already granted Accessibility + Input Monitoring, quit KeySwitch completely and relaunch. Then click Refresh."
+            lastMessage = "Grant Accessibility + Input Monitoring in System Settings, then click Refresh."
             return
         }
-
-        eventTap = tap
-        canCapture = true
-        let source = CFMachPortCreateRunLoopSource(nil, tap, 0)
-        runLoopSource = source
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
-    }
-
-    private func removeTap() {
-        guard let tap = eventTap else { return }
-        CGEvent.tapEnable(tap: tap, enable: false)
-        if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        guard let kb = resolvedKeyboard else {
+            canCapture = false
+            lastMessage = "No external keyboard found. Connect one (e.g. a Magic Keyboard) and click Refresh."
+            return
         }
-        eventTap = nil
-        runLoopSource = nil
-    }
-
-    private nonisolated func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            Task { @MainActor in
-                if let tap = self.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
-            }
-            return Unmanaged.passRetained(event)
+        if hid.startKeyboardMonitor(vendorID: kb.vendorID, productID: kb.productID) {
+            canCapture = true
+        } else {
+            canCapture = false
+            lastMessage = "Couldn't open \(kb.name) for monitoring. Click Refresh, or re-grant Input Monitoring."
         }
-
-        let keyCode = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
-        let flags = event.flags
-
-        if type == .keyDown, keyCode == hotkeyKeyCode, flags.contains([.maskCommand, .maskShift]) {
-            Task { @MainActor in await self.toggleForwarding() }
-            return nil
-        }
-
-        guard isForwardingSnapshot else { return Unmanaged.passRetained(event) }
-
-        // The tap runs on the main run loop, so send synchronously — no actor hop.
-        // connection.send() itself is async internally, so this doesn't block.
-        if let mouse = mousePayload(type: type, event: event) {
-            PeerNetwork.shared.sendMouseEvent(mouse)
-            // Bulletproof freeze: forcibly snap the local cursor back to the parked
-            // point. Returning nil + decouple should be enough, but on some setups
-            // (trackpads) the pointer still drifts, so we pin it every move.
-            if let fp = freezePoint { CGWarpMouseCursorPosition(fp) }
-            return nil
-        }
-
-        PeerNetwork.shared.sendKeyEvent(
-            keyCode: keyCode,
-            keyDown: type != .keyUp,
-            flags: flags.rawValue,
-            isFlagsChanged: type == .flagsChanged
-        )
-        return nil
-    }
-
-    /// Translate a captured mouse CGEvent into a portable payload (relative deltas,
-    /// not absolute position, since the two Macs have different screen geometry).
-    private nonisolated func mousePayload(type: CGEventType, event: CGEvent) -> MousePayload? {
-        switch type {
-        case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
-            return MousePayload(
-                kind: "move",
-                dx: Double(event.getIntegerValueField(.mouseEventDeltaX)),
-                dy: Double(event.getIntegerValueField(.mouseEventDeltaY))
-            )
-        case .leftMouseDown:  return MousePayload(kind: "leftDown")
-        case .leftMouseUp:    return MousePayload(kind: "leftUp")
-        case .rightMouseDown: return MousePayload(kind: "rightDown")
-        case .rightMouseUp:   return MousePayload(kind: "rightUp")
-        case .otherMouseDown: return MousePayload(kind: "otherDown", button: event.getIntegerValueField(.mouseEventButtonNumber))
-        case .otherMouseUp:   return MousePayload(kind: "otherUp", button: event.getIntegerValueField(.mouseEventButtonNumber))
-        case .scrollWheel:
-            return MousePayload(
-                kind: "scroll",
-                scrollDX: event.getIntegerValueField(.scrollWheelEventDeltaAxis2),
-                scrollDY: event.getIntegerValueField(.scrollWheelEventDeltaAxis1)
-            )
-        default:
-            return nil
-        }
-    }
-
-    /// Read from a non-isolated context inside the tap callback. Safe: only ever
-    /// written on the main thread, and the tap's run loop source is on the main run loop.
-    private nonisolated var isForwardingSnapshot: Bool {
-        MainActor.assumeIsolated { isForwarding }
-    }
-
-    /// Called when the forwarding connection drops unexpectedly, so we don't leave
-    /// the mouse frozen and forwarding state stuck on.
-    func forwardingDropped() {
-        guard isForwarding else { return }
-        setLocalCursorFrozen(false)
-        isForwarding = false
-        lastMessage = "Lost the other Mac — keyboard & mouse are local again."
     }
 
     func toggleForwarding() async {
         if isForwarding {
             PeerNetwork.shared.stopKeyForwarding()
+            hid.releaseKeyboardSeize()
+            hid.releaseMouse()
             setLocalCursorFrozen(false)
             isForwarding = false
             lastMessage = "Keyboard & mouse are local."
@@ -246,30 +199,57 @@ final class InputBridge: ObservableObject {
             lastMessage = "Set the other Mac + pairing token in Settings first."
             return
         }
+        refreshDeviceList()
+        guard let mouse = resolvedMouse else {
+            lastMessage = "No external mouse found. Connect one (e.g. your G304) and click Refresh."
+            return
+        }
+
         let ok = await PeerNetwork.shared.beginKeyForwarding(config: ConfigStore.shared.config)
-        isForwarding = ok
-        if ok { setLocalCursorFrozen(true) }
-        lastMessage = ok
-            ? "Controlling \(ConfigStore.shared.config.peerHostName.isEmpty ? "other Mac" : ConfigStore.shared.config.peerHostName). Press \(Self.hotkeyDisplay) to come back."
-            : "Couldn't reach the other Mac. Still local."
+        guard ok else {
+            isForwarding = false
+            lastMessage = "Couldn't reach the other Mac. Still local."
+            return
+        }
+
+        let keyboardOK = hid.seizeKeyboard()
+        let mouseOK = hid.seizeMouse(vendorID: mouse.vendorID, productID: mouse.productID)
+        guard keyboardOK, mouseOK else {
+            PeerNetwork.shared.stopKeyForwarding()
+            hid.releaseKeyboardSeize()
+            hid.releaseMouse()
+            isForwarding = false
+            lastMessage = "Couldn't take exclusive control of the keyboard/mouse. Try again."
+            return
+        }
+
+        setLocalCursorFrozen(true)
+        isForwarding = true
+        lastMessage = "Controlling \(ConfigStore.shared.config.peerHostName.isEmpty ? "other Mac" : ConfigStore.shared.config.peerHostName). Press \(Self.hotkeyDisplay) to come back."
     }
 
-    /// While forwarding, decouple the physical mouse from THIS Mac's cursor so it
-    /// only drives the peer. Movement events still reach the tap (with deltas), so
-    /// we can forward them; the local cursor just stops moving. Must always be undone
-    /// (here and on quit) or the user's mouse stays frozen.
-    nonisolated(unsafe) private var freezePoint: CGPoint?
-
+    /// Purely cosmetic now: the external mouse is exclusively seized while
+    /// forwarding, so its movement never reaches the local cursor at all — this
+    /// just hides the (now-idle) cursor for a cleaner "you're driving the other
+    /// Mac" feel. The built-in trackpad is untouched and keeps moving the cursor
+    /// normally if used, which is intentional.
     func setLocalCursorFrozen(_ frozen: Bool) {
         if frozen {
-            freezePoint = CGEvent(source: nil)?.location
-            CGAssociateMouseAndMouseCursorPosition(0)
             CGDisplayHideCursor(CGMainDisplayID())
         } else {
-            freezePoint = nil
-            CGAssociateMouseAndMouseCursorPosition(1)
             CGDisplayShowCursor(CGMainDisplayID())
         }
+    }
+
+    /// Called when the forwarding connection drops unexpectedly, so we don't
+    /// leave devices seized and forwarding state stuck on.
+    func forwardingDropped() {
+        guard isForwarding else { return }
+        hid.releaseKeyboardSeize()
+        hid.releaseMouse()
+        setLocalCursorFrozen(false)
+        isForwarding = false
+        lastMessage = "Lost the other Mac — keyboard & mouse are local again."
     }
 
     // MARK: - Receiver side (inject)
@@ -395,4 +375,6 @@ final class InputBridge: ObservableObject {
             }
         }
     }
+
+    private var receivingResetTask: Task<Void, Never>?
 }

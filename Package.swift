@@ -14,6 +14,7 @@ let package = Package(
                 .linkedFramework("Cocoa"),
                 .linkedFramework("SwiftUI"),
                 .linkedFramework("ServiceManagement"),
+                .linkedFramework("IOKit"),
             ]
         ),
     ]

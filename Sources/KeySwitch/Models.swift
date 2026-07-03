@@ -52,6 +52,13 @@ struct AppConfig: Codable, Equatable {
     var isKeyboardOwner: Bool
     var thisMacName: String
     var listenPort: UInt16
+    // 0 = "auto-detect the external device" (never a built-in keyboard/trackpad).
+    var externalKeyboardVendorID: Int
+    var externalKeyboardProductID: Int
+    var externalKeyboardName: String
+    var externalMouseVendorID: Int
+    var externalMouseProductID: Int
+    var externalMouseName: String
 
     static let `default` = AppConfig(
         peerHostName: "",
@@ -59,8 +66,58 @@ struct AppConfig: Codable, Equatable {
         pairingToken: "",
         isKeyboardOwner: false,
         thisMacName: Host.current().localizedName ?? "This Mac",
-        listenPort: 9847
+        listenPort: 9847,
+        externalKeyboardVendorID: 0,
+        externalKeyboardProductID: 0,
+        externalKeyboardName: "",
+        externalMouseVendorID: 0,
+        externalMouseProductID: 0,
+        externalMouseName: ""
     )
+
+    // Custom decode so configs saved before device selection existed still load
+    // (new fields default to "auto-detect" instead of failing the whole decode).
+    enum CodingKeys: String, CodingKey {
+        case peerHostName, peerAddress, pairingToken, isKeyboardOwner, thisMacName, listenPort
+        case externalKeyboardVendorID, externalKeyboardProductID, externalKeyboardName
+        case externalMouseVendorID, externalMouseProductID, externalMouseName
+    }
+
+    init(
+        peerHostName: String, peerAddress: String, pairingToken: String, isKeyboardOwner: Bool,
+        thisMacName: String, listenPort: UInt16,
+        externalKeyboardVendorID: Int, externalKeyboardProductID: Int, externalKeyboardName: String,
+        externalMouseVendorID: Int, externalMouseProductID: Int, externalMouseName: String
+    ) {
+        self.peerHostName = peerHostName
+        self.peerAddress = peerAddress
+        self.pairingToken = pairingToken
+        self.isKeyboardOwner = isKeyboardOwner
+        self.thisMacName = thisMacName
+        self.listenPort = listenPort
+        self.externalKeyboardVendorID = externalKeyboardVendorID
+        self.externalKeyboardProductID = externalKeyboardProductID
+        self.externalKeyboardName = externalKeyboardName
+        self.externalMouseVendorID = externalMouseVendorID
+        self.externalMouseProductID = externalMouseProductID
+        self.externalMouseName = externalMouseName
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        peerHostName = try c.decode(String.self, forKey: .peerHostName)
+        peerAddress = try c.decode(String.self, forKey: .peerAddress)
+        pairingToken = try c.decode(String.self, forKey: .pairingToken)
+        isKeyboardOwner = try c.decode(Bool.self, forKey: .isKeyboardOwner)
+        thisMacName = try c.decode(String.self, forKey: .thisMacName)
+        listenPort = try c.decode(UInt16.self, forKey: .listenPort)
+        externalKeyboardVendorID = try c.decodeIfPresent(Int.self, forKey: .externalKeyboardVendorID) ?? 0
+        externalKeyboardProductID = try c.decodeIfPresent(Int.self, forKey: .externalKeyboardProductID) ?? 0
+        externalKeyboardName = try c.decodeIfPresent(String.self, forKey: .externalKeyboardName) ?? ""
+        externalMouseVendorID = try c.decodeIfPresent(Int.self, forKey: .externalMouseVendorID) ?? 0
+        externalMouseProductID = try c.decodeIfPresent(Int.self, forKey: .externalMouseProductID) ?? 0
+        externalMouseName = try c.decodeIfPresent(String.self, forKey: .externalMouseName) ?? ""
+    }
 }
 
 enum SwitchError: LocalizedError {
