@@ -7,6 +7,9 @@ struct PeerSetupSnapshot: Codable, Sendable, Equatable {
     var peerConfigured: Bool
     var networkListening: Bool
     var listenPort: UInt16
+    // nil when the peer runs an older build
+    var canPost: Bool?
+    var canCapture: Bool?
 }
 
 struct PeerMessage: Codable, Sendable {

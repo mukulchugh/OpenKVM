@@ -354,13 +354,16 @@ final class PeerNetwork: ObservableObject {
 
     @MainActor
     private func localSetupSnapshot(config: AppConfig) -> PeerSetupSnapshot {
-        PeerSetupSnapshot(
+        InputBridge.shared.refreshPermissions()
+        return PeerSetupSnapshot(
             hostName: config.thisMacName,
             isKeyboardOwner: config.isKeyboardOwner,
             tokenSet: !config.pairingToken.isEmpty,
             peerConfigured: !config.peerHostName.isEmpty || !config.peerAddress.isEmpty,
             networkListening: isListening,
-            listenPort: config.listenPort
+            listenPort: config.listenPort,
+            canPost: InputBridge.shared.canPost,
+            canCapture: InputBridge.shared.canCapture
         )
     }
 

@@ -71,6 +71,24 @@ struct SettingsView: View {
                             statusMessage = nil
                         }
                     }
+                    if let peer = network.peerSetupStatus {
+                        if peer.isKeyboardOwner && configStore.config.isKeyboardOwner {
+                            Label("Both Macs claim the keyboard — turn OFF the toggle on \(peer.hostName).", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                        if configStore.config.isKeyboardOwner && peer.canPost == false {
+                            Label("\(peer.hostName) can't type yet — grant permission in KeySwitch there.", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                        if configStore.config.isKeyboardOwner && peer.canPost == nil {
+                            Label("\(peer.hostName) runs an old build — update KeySwitch there.", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    Button("Check other Mac") {
+                        Task { await network.fetchPeerSetupStatus(config: configStore.config) }
+                    }
+                    .disabled(network.isFetchingPeerSetup)
                 } else if network.discoveredPeers.isEmpty {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
@@ -123,6 +141,9 @@ struct SettingsView: View {
         .onAppear {
             bridge.refreshPermissions()
             restartNetwork()
+            if isPaired {
+                Task { await network.fetchPeerSetupStatus(config: configStore.config) }
+            }
         }
         .onChange(of: configStore.config.thisMacName) { _ in restartNetwork() }
         .onChange(of: configStore.config.listenPort) { _ in restartNetwork() }
