@@ -14,10 +14,27 @@ final class PeerNetwork: ObservableObject {
 
     private var listener: NWListener?
     private var browser: NWBrowser?
-    private var outboundStream: NWConnection?
     private let queue = DispatchQueue(label: "com.keyswitch.network")
+    private let encoder = JSONEncoder()
+
+    // The forwarding stream and cached auth are touched only on the main thread:
+    // beginKeyForwarding/stopKeyForwarding are @MainActor, and the event-tap
+    // callback runs on the main run loop. nonisolated(unsafe) documents that.
+    nonisolated(unsafe) private var outboundStream: NWConnection?
+    nonisolated(unsafe) private var fwdToken = ""
+    nonisolated(unsafe) private var fwdHost = ""
 
     private init() {}
+
+    /// TCP with Nagle's algorithm disabled — critical for mouse smoothness, since
+    /// Nagle would buffer each tiny move packet and add tens of ms of latency.
+    private static func lowLatencyParams() -> NWParameters {
+        let tcp = NWProtocolTCP.Options()
+        tcp.noDelay = true
+        tcp.enableKeepalive = true
+        tcp.keepaliveIdle = 2
+        return NWParameters(tls: nil, tcp: tcp)
+    }
 
     @MainActor
     func start(config: AppConfig) {
@@ -38,7 +55,7 @@ final class PeerNetwork: ObservableObject {
 
     private func startListener(port: UInt16, serviceName: String) {
         do {
-            let params = NWParameters.tcp
+            let params = Self.lowLatencyParams()
             let listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
             let advertisedName = serviceName.isEmpty ? (Host.current().localizedName ?? "KeySwitch") : serviceName
             listener.service = NWListener.Service(name: advertisedName, type: "_keyswitch._tcp")
@@ -170,7 +187,7 @@ final class PeerNetwork: ObservableObject {
 
     private func request(_ message: PeerMessage, to endpoint: NWEndpoint) async throws -> PeerMessage? {
         try await withCheckedThrowingContinuation { continuation in
-            let connection = NWConnection(to: endpoint, using: .tcp)
+            let connection = NWConnection(to: endpoint, using: Self.lowLatencyParams())
             var finished = false
             connection.stateUpdateHandler = { state in
                 switch state {
@@ -277,8 +294,10 @@ final class PeerNetwork: ObservableObject {
             return false
         }
 
-        let connection = NWConnection(to: endpoint, using: .tcp)
+        let connection = NWConnection(to: endpoint, using: Self.lowLatencyParams())
         outboundStream = connection
+        fwdToken = config.pairingToken
+        fwdHost = config.thisMacName
         return await withCheckedContinuation { continuation in
             var resumed = false
             connection.stateUpdateHandler = { [weak self] state in
@@ -310,36 +329,35 @@ final class PeerNetwork: ObservableObject {
         outboundStream = nil
     }
 
-    func sendKeyEvent(keyCode: UInt16, keyDown: Bool, flags: UInt64, isFlagsChanged: Bool, config: AppConfig) {
-        guard let connection = outboundStream else { return }
-        let message = PeerMessage(
-            action: .keyEvent,
-            hostName: config.thisMacName,
-            token: config.pairingToken,
-            setupStatus: nil,
-            keyCode: keyCode,
-            keyDown: keyDown,
-            flags: flags,
-            isFlagsChanged: isFlagsChanged
-        )
-        send(message: message, on: connection)
+    // Hot path: called directly from the event-tap callback (main run loop), no
+    // @MainActor hop, cached auth, reused encoder — minimal latency per event.
+    func sendKeyEvent(keyCode: UInt16, keyDown: Bool, flags: UInt64, isFlagsChanged: Bool) {
+        var message = PeerMessage(action: .keyEvent, hostName: fwdHost, token: fwdToken, setupStatus: nil)
+        message.keyCode = keyCode
+        message.keyDown = keyDown
+        message.flags = flags
+        message.isFlagsChanged = isFlagsChanged
+        emit(message)
     }
 
-    func sendMouseEvent(_ m: MousePayload, config: AppConfig) {
-        guard let connection = outboundStream else { return }
-        var message = PeerMessage(
-            action: .mouseEvent,
-            hostName: config.thisMacName,
-            token: config.pairingToken,
-            setupStatus: nil
-        )
+    func sendMouseEvent(_ m: MousePayload) {
+        var message = PeerMessage(action: .mouseEvent, hostName: fwdHost, token: fwdToken, setupStatus: nil)
         message.mouseKind = m.kind
         message.dx = m.dx
         message.dy = m.dy
         message.scrollDX = m.scrollDX
         message.scrollDY = m.scrollDY
         message.button = m.button
-        send(message: message, on: connection)
+        emit(message)
+    }
+
+    private func emit(_ message: PeerMessage) {
+        guard let connection = outboundStream, let data = try? encoder.encode(message) else { return }
+        var framed = Data(capacity: data.count + 4)
+        var length = UInt32(data.count).bigEndian
+        withUnsafeBytes(of: &length) { framed.append(contentsOf: $0) }
+        framed.append(data)
+        connection.send(content: framed, completion: .idempotent)
     }
 
     @MainActor

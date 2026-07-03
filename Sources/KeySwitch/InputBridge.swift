@@ -166,24 +166,19 @@ final class InputBridge: ObservableObject {
 
         guard isForwardingSnapshot else { return Unmanaged.passRetained(event) }
 
+        // The tap runs on the main run loop, so send synchronously — no actor hop.
+        // connection.send() itself is async internally, so this doesn't block.
         if let mouse = mousePayload(type: type, event: event) {
-            Task { @MainActor in
-                PeerNetwork.shared.sendMouseEvent(mouse, config: ConfigStore.shared.config)
-            }
+            PeerNetwork.shared.sendMouseEvent(mouse)
             return nil
         }
 
-        let keyDown = type != .keyUp
-        let isFlagsChanged = type == .flagsChanged
-        Task { @MainActor in
-            PeerNetwork.shared.sendKeyEvent(
-                keyCode: keyCode,
-                keyDown: keyDown,
-                flags: flags.rawValue,
-                isFlagsChanged: isFlagsChanged,
-                config: ConfigStore.shared.config
-            )
-        }
+        PeerNetwork.shared.sendKeyEvent(
+            keyCode: keyCode,
+            keyDown: type != .keyUp,
+            flags: flags.rawValue,
+            isFlagsChanged: type == .flagsChanged
+        )
         return nil
     }
 
