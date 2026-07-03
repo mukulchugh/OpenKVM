@@ -114,7 +114,10 @@ final class InputBridge: ObservableObject {
             (1 << CGEventType.scrollWheel.rawValue)
 
         guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
+            // HID-level tap: returning nil here suppresses the event before the
+            // window server moves the cursor, so the owner's pointer actually
+            // freezes while forwarding. Session-level taps see moves too late.
+            tap: .cghidEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
             eventsOfInterest: mask,
