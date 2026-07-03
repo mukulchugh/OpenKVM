@@ -1,9 +1,10 @@
 #!/bin/bash
-# Run this on the Mac where KeySwitch shows as "damaged".
-# Usage: chmod +x install-on-mac.sh && ./install-on-mac.sh
+# Turnkey installer for the OTHER Mac (the receiver).
+# Unzip, then double-click this file — or run: ./install-on-mac.sh
 set -euo pipefail
 
 APP_NAME="KeySwitch"
+BUNDLE_ID="com.keyswitch.app"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_APP="$SCRIPT_DIR/${APP_NAME}.app"
 DEST="/Applications/${APP_NAME}.app"
@@ -13,17 +14,29 @@ if [[ ! -d "$SRC_APP" ]]; then
     exit 1
 fi
 
-echo "Removing quarantine flags..."
-xattr -cr "$SRC_APP" 2>/dev/null || true
+echo "==> Quitting any running KeySwitch..."
+osascript -e 'quit app "KeySwitch"' 2>/dev/null || true
+sleep 1
 
-echo "Installing to ${DEST}..."
+echo "==> Installing to ${DEST}..."
+xattr -cr "$SRC_APP" 2>/dev/null || true
 rm -rf "$DEST"
 ditto "$SRC_APP" "$DEST"
 xattr -cr "$DEST" 2>/dev/null || true
 
+echo "==> Clearing stale permission entries from older builds..."
+tccutil reset Accessibility "$BUNDLE_ID" 2>/dev/null || true
+tccutil reset PostEvent     "$BUNDLE_ID" 2>/dev/null || true
+tccutil reset ListenEvent   "$BUNDLE_ID" 2>/dev/null || true
+
+echo "==> Launching..."
+open "$DEST"
+
 echo ""
-echo "Installed. First launch:"
-echo "  1. Open Finder → Applications"
-echo "  2. Right-click KeySwitch → Open"
-echo "  3. Click Open in the dialog (only needed once)"
-echo "  4. Grant Bluetooth + Local Network when prompted"
+echo "Installed and running. On THIS Mac (the receiver):"
+echo "  1. Approve the Accessibility prompt (or System Settings →"
+echo "     Privacy & Security → Accessibility → enable KeySwitch)."
+echo "  2. Open KeySwitch Settings and make sure"
+echo "     \"This Mac has the physical keyboard\" is OFF."
+echo ""
+echo "Then on the Mac WITH the keyboard, press Command+Shift+K to switch."
