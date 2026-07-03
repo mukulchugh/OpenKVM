@@ -145,6 +145,18 @@ final class PeerNetwork: ObservableObject {
             )
             // Stream connection: keep reading further key events, never close.
             receiveNext(on: connection)
+        case .mouseEvent:
+            if let kind = message.mouseKind {
+                InputBridge.shared.injectMouse(MousePayload(
+                    kind: kind,
+                    dx: message.dx ?? 0,
+                    dy: message.dy ?? 0,
+                    scrollDX: message.scrollDX ?? 0,
+                    scrollDY: message.scrollDY ?? 0,
+                    button: message.button ?? 0
+                ))
+            }
+            receiveNext(on: connection)
         default:
             connection.cancel()
         }
@@ -310,6 +322,23 @@ final class PeerNetwork: ObservableObject {
             flags: flags,
             isFlagsChanged: isFlagsChanged
         )
+        send(message: message, on: connection)
+    }
+
+    func sendMouseEvent(_ m: MousePayload, config: AppConfig) {
+        guard let connection = outboundStream else { return }
+        var message = PeerMessage(
+            action: .mouseEvent,
+            hostName: config.thisMacName,
+            token: config.pairingToken,
+            setupStatus: nil
+        )
+        message.mouseKind = m.kind
+        message.dx = m.dx
+        message.dy = m.dy
+        message.scrollDX = m.scrollDX
+        message.scrollDY = m.scrollDY
+        message.button = m.button
         send(message: message, on: connection)
     }
 

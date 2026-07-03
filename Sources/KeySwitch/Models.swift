@@ -15,6 +15,7 @@ struct PeerSetupSnapshot: Codable, Sendable, Equatable {
 struct PeerMessage: Codable, Sendable {
     enum Action: String, Codable, Sendable {
         case keyEvent
+        case mouseEvent
         case ping
         case pong
         case status
@@ -33,6 +34,13 @@ struct PeerMessage: Codable, Sendable {
     var keyDown: Bool?
     var flags: UInt64?
     var isFlagsChanged: Bool?
+    // mouseEvent payload
+    var mouseKind: String?   // move, leftDown, leftUp, rightDown, rightUp, otherDown, otherUp, scroll
+    var dx: Double?
+    var dy: Double?
+    var scrollDX: Int64?
+    var scrollDY: Int64?
+    var button: Int64?
     // pairResponse payload
     var approved: Bool?
 }
