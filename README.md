@@ -1,5 +1,7 @@
 # OpenKVM
 
+![OpenKVM](docs-assets/banner.png)
+
 macOS menu bar app that forwards a physical keyboard and mouse from one Mac to another over the local network.
 
 The Mac with the hardware attached captures keystrokes and pointer events, sends them to your other Mac over TCP/UDP, and replays them there. Toggle control with **⌘⇧K** or the menu bar — the hotkey always works locally so you are never locked out.
