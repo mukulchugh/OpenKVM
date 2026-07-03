@@ -225,6 +225,11 @@ final class PeerNetwork: ObservableObject {
                 InputBridge.shared.inject(keyCode: kc, keyDown: kd, flags: m.flags ?? 0, isFlagsChanged: m.isFlagsChanged ?? false)
             }
             return true
+        case .mediaKeyEvent:
+            if let nx = m.nxKeyType, let kd = m.keyDown {
+                InputBridge.shared.injectMediaKey(nxKeyType: nx, keyDown: kd)
+            }
+            return true
         case .mouseEvent:
             if let kind = m.mouseKind {
                 InputBridge.shared.injectMouse(MousePayload(
@@ -472,6 +477,13 @@ final class PeerNetwork: ObservableObject {
         message.keyDown = keyDown
         message.flags = flags
         message.isFlagsChanged = isFlagsChanged
+        queue.async { [self] in emitOnQueue(message) }
+    }
+
+    func sendMediaKey(nxKeyType: Int32, keyDown: Bool) {
+        var message = PeerMessage(action: .mediaKeyEvent, hostName: fwdHost, token: fwdToken, setupStatus: nil)
+        message.nxKeyType = nxKeyType
+        message.keyDown = keyDown
         queue.async { [self] in emitOnQueue(message) }
     }
 

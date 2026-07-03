@@ -31,7 +31,9 @@ final class InputBridge: ObservableObject {
     static let shared = InputBridge()
     static let hotkeyDisplay = "⌘⇧K"
 
-    @Published private(set) var isForwarding = false
+    @Published private(set) var isForwarding = false {
+        didSet { isForwardingUnsafe = isForwarding }
+    }
     @Published private(set) var canCapture = false // permissions + external keyboard monitor active
     @Published private(set) var canPost = false     // synthesize events on this Mac
     @Published private(set) var isReceivingFromPeer = false
@@ -68,13 +70,17 @@ final class InputBridge: ObservableObject {
             guard InputBridge.shared.isForwardingSnapshot else { return }
             PeerNetwork.shared.sendMouseEvent(MousePayload(kind: "scroll", scrollDX: sx, scrollDY: sy))
         }
+        hid.onMediaKey = { nxKeyType, down in
+            guard InputBridge.shared.isForwardingSnapshot else { return }
+            PeerNetwork.shared.sendMediaKey(nxKeyType: nxKeyType, keyDown: down)
+        }
     }
 
-    /// Read from a non-isolated HID callback context. Safe: only ever written on
-    /// the main thread, and HID callbacks are scheduled on the main run loop.
-    private nonisolated var isForwardingSnapshot: Bool {
-        MainActor.assumeIsolated { isForwarding }
-    }
+    /// Mirror of isForwarding, kept in sync via didSet, readable from HID
+    /// callbacks that now run on HIDInputCapture's dedicated capture thread —
+    /// NOT the main thread, so MainActor.assumeIsolated would trap here.
+    nonisolated(unsafe) private var isForwardingUnsafe = false
+    private nonisolated var isForwardingSnapshot: Bool { isForwardingUnsafe }
 
     // MARK: - Permissions
 
@@ -252,6 +258,7 @@ final class InputBridge: ObservableObject {
         removeSuppressionTap()
         let mask: CGEventMask =
             (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
+                | (1 << 14) // NX_SYSDEFINED: media/function-row keys, so e.g. volume doesn't ALSO change locally while forwarding
         guard let tap = CGEvent.tapCreate(
             tap: .cghidEventTap,
             place: .headInsertEventTap,
@@ -346,6 +353,31 @@ final class InputBridge: ObservableObject {
         guard let event = CGEvent(keyboardEventSource: injectSource, virtualKey: keyCode, keyDown: keyDown) else { return }
         if isFlagsChanged { event.type = .flagsChanged }
         event.flags = CGEventFlags(rawValue: flags)
+        event.post(tap: .cghidEventTap)
+        markReceiving()
+    }
+
+    /// Media/function-row keys (volume, brightness, play/pause, etc.) aren't
+    /// plain keycodes — macOS represents them as "system-defined" NSEvents
+    /// (type .systemDefined, subtype 8, NX_KEYTYPE packed into data1). This is
+    /// the same construction Deskflow/Synergy use in production
+    /// (OSXMediaKeySupport.m: fakeNativeMediaKey) — unofficial (no public
+    /// Apple API) but stable and widely relied upon.
+    nonisolated func injectMediaKey(nxKeyType: Int32, keyDown: Bool) {
+        guard ensureCanPost() else { return }
+        let stateByte = keyDown ? 0xA : 0xB
+        let data1 = (Int(nxKeyType) << 16) | (stateByte << 8)
+        guard let nsEvent = NSEvent.otherEvent(
+            with: .systemDefined,
+            location: .zero,
+            modifierFlags: NSEvent.ModifierFlags(rawValue: 0xa00),
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            subtype: 8,
+            data1: data1,
+            data2: -1
+        ), let event = nsEvent.cgEvent else { return }
         event.post(tap: .cghidEventTap)
         markReceiving()
     }

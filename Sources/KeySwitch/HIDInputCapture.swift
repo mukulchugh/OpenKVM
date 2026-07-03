@@ -14,12 +14,38 @@ struct HIDDeviceInfo: Identifiable, Hashable, Sendable {
 private let hidPageGenericDesktop: UInt32 = 0x01
 private let hidPageKeyboard: UInt32 = 0x07
 private let hidPageButton: UInt32 = 0x09
+private let hidPageConsumer: UInt32 = 0x0C
 private let hidUsageGDKeyboard: UInt32 = 0x06
 private let hidUsageGDMouse: UInt32 = 0x02
 private let hidUsageGDPointer: UInt32 = 0x01
 private let hidUsageGDX: UInt32 = 0x30
 private let hidUsageGDY: UInt32 = 0x31
 private let hidUsageGDWheel: UInt32 = 0x38
+
+/// USB HID Consumer-page (0x0C) usage → macOS NX_KEYTYPE constant (from
+/// IOKit/hidsystem/ev_keymap.h). The Magic Keyboard's F-row sends these
+/// instead of plain F1-F12 keycodes unless Fn-lock is set to standard
+/// function keys. Covers the classic media keys (volume, brightness, play/
+/// pause/next/prev, eject, keyboard illumination) — the ones with a real
+/// NX_KEYTYPE. Apple's newer Mission Control/Launchpad/Dictation/Do Not
+/// Disturb F-row keys are NOT standard HID Consumer usages and aren't
+/// covered; a known, documented gap.
+private let hidConsumerUsageToNXKeyType: [Int: Int32] = [
+    0xE9: 0,  // Volume Increment -> NX_KEYTYPE_SOUND_UP
+    0xEA: 1,  // Volume Decrement -> NX_KEYTYPE_SOUND_DOWN
+    0x6F: 2,  // Display Brightness Increment -> NX_KEYTYPE_BRIGHTNESS_UP
+    0x70: 3,  // Display Brightness Decrement -> NX_KEYTYPE_BRIGHTNESS_DOWN
+    0xE2: 7,  // Mute -> NX_KEYTYPE_MUTE
+    0xB8: 14, // Eject -> NX_KEYTYPE_EJECT
+    0xCD: 16, // Play/Pause -> NX_KEYTYPE_PLAY
+    0xB5: 17, // Scan Next Track -> NX_KEYTYPE_NEXT
+    0xB6: 18, // Scan Previous Track -> NX_KEYTYPE_PREVIOUS
+    0xB3: 19, // Fast Forward -> NX_KEYTYPE_FAST
+    0xB4: 20, // Rewind -> NX_KEYTYPE_REWIND
+    0x79: 21, // Keyboard Illumination Up
+    0x7A: 22, // Keyboard Illumination Down
+    0x7B: 23, // Keyboard Illumination Toggle
+]
 
 /// USB HID keyboard-page usage → macOS virtual keycode (the same numbering
 /// CGEvent(keyboardEventSource:virtualKey:) expects). Covers letters, digits,
@@ -71,6 +97,9 @@ final class HIDInputCapture {
     private var keyboardDevice: IOHIDDevice?
     private var mouseDevice: IOHIDDevice?
     private var modifierState: [UInt32: Bool] = [:]
+    private let hidThread: Thread
+    private let hidRunLoop: CFRunLoop
+    private static let hidRunLoopMode = CFRunLoopMode.defaultMode.rawValue
 
     var hasKeyboardMonitor: Bool { keyboardDevice != nil }
 
@@ -78,15 +107,44 @@ final class HIDInputCapture {
     var onHotkey: (() -> Void)?
     /// keyCode (macOS virtual), keyDown, current CGEventFlags, isModifierKey
     var onKeyEvent: ((UInt16, Bool, UInt64, Bool) -> Void)?
+    /// Media/function-row key from the Consumer usage page: NX_KEYTYPE, keyDown.
+    var onMediaKey: ((Int32, Bool) -> Void)?
     var onMouseDeltaX: ((Double) -> Void)?
     var onMouseDeltaY: ((Double) -> Void)?
     var onMouseButton: ((String, Int64) -> Void)?
     var onScroll: ((Int64, Int64) -> Void)?
 
+    /// HID capture runs on a dedicated, elevated-priority thread with its own
+    /// CFRunLoop — NOT the main run loop. Scheduling on CFRunLoopGetMain() (the
+    /// original approach) made HID callback delivery compete with AppKit/SwiftUI
+    /// for the main thread's attention, adding variable latency that showed up
+    /// as mouse jitter. This is the same isolation technique Psychtoolbox uses
+    /// for latency-sensitive HID capture.
     private init() {
+        final class RunLoopBox: @unchecked Sendable { var runLoop: CFRunLoop? }
+        let box = RunLoopBox()
+        let ready = DispatchSemaphore(value: 0)
+
+        let thread = Thread {
+            box.runLoop = CFRunLoopGetCurrent()
+            // A run loop with no sources exits immediately; this timer (never
+            // fires) keeps it alive so IOHID sources added later actually run.
+            let keepAlive = CFRunLoopTimerCreateWithHandler(nil, CFAbsoluteTimeGetCurrent() + 1e10, 0, 0, 0) { _ in }
+            CFRunLoopAddTimer(CFRunLoopGetCurrent(), keepAlive, .defaultMode)
+            ready.signal()
+            CFRunLoopRun()
+        }
+        thread.name = "com.keyswitch.hid"
+        thread.qualityOfService = QualityOfService.userInteractive
+        thread.threadPriority = 1.0
+        thread.start()
+        ready.wait()
+
+        hidThread = thread
+        hidRunLoop = box.runLoop!
         manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
         IOHIDManagerSetDeviceMatching(manager, nil)
-        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+        IOHIDManagerScheduleWithRunLoop(manager, hidRunLoop, Self.hidRunLoopMode)
         IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
     }
 
@@ -211,7 +269,7 @@ final class HIDInputCapture {
             guard let context else { return }
             Unmanaged<HIDInputCapture>.fromOpaque(context).takeUnretainedValue().handleKeyboardValue(value)
         }, ctx)
-        IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+        IOHIDDeviceScheduleWithRunLoop(device, hidRunLoop, Self.hidRunLoopMode)
     }
 
     private func registerMouseCallback(_ device: IOHIDDevice) {
@@ -220,14 +278,22 @@ final class HIDInputCapture {
             guard let context else { return }
             Unmanaged<HIDInputCapture>.fromOpaque(context).takeUnretainedValue().handleMouseValue(value)
         }, ctx)
-        IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+        IOHIDDeviceScheduleWithRunLoop(device, hidRunLoop, Self.hidRunLoopMode)
     }
 
     private func handleKeyboardValue(_ value: IOHIDValue) {
         let element = IOHIDValueGetElement(value)
-        guard IOHIDElementGetUsagePage(element) == hidPageKeyboard else { return }
+        let usagePage = IOHIDElementGetUsagePage(element)
         let usage = Int(IOHIDElementGetUsage(element))
         let down = IOHIDValueGetIntegerValue(value) != 0
+
+        if usagePage == hidPageConsumer {
+            guard let nxKeyType = hidConsumerUsageToNXKeyType[usage] else { return }
+            onMediaKey?(nxKeyType, down)
+            return
+        }
+        guard usagePage == hidPageKeyboard else { return }
+
         let isModifier = usage >= 0xE0 && usage <= 0xE7
         if isModifier { modifierState[UInt32(usage)] = down }
 

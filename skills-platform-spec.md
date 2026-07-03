@@ -140,13 +140,19 @@
 - Approval workflow (`in_review` gate); activity feed; pull-count analytics
 - Windows/Linux sync agent; `altr` CLI in CI
 - Public/unlisted skill sharing links (growth loop)
+- Connect-your-own git host (GitHub/GitLab/Bitbucket) beyond Altr-hosted
+- Prompt library (lightweight prompts alongside skills)
 - AGENTS.md export
+
+### V2 — skill marketplace (needs users first)
+- **Curated + community-submission marketplace** — discover and one-click-add skills to your library. A growth/content asset (per-skill SEO, sharing loop), *not* a head-to-head with vendor in-app marketplaces.
+- **Skill Curator** role — review/feature submitted skills, maintain curated collections.
+- Sequenced after the core sync loop proves out — an empty store is worse than none.
 
 ### Later — explicitly deferred
 - Two-way sync from local edits (drift → PR-like proposal)
 - Skill analytics from agent telemetry; A/B versions
 - Enterprise: SAML/SSO, SCIM, audit log, self-hosting
-- Community/public directory (only if vendors leave it open)
 
 ### Never
 - Proprietary skill format · agent runtime · prompt-eval platform · being a thin model reseller
@@ -213,9 +219,10 @@ The feature that makes the product usable by non-writers. Three capabilities, al
 - Every AI output AND every human/Git edit passes the same validator (mirrors `skills-ref validate` semantics): frontmatter present and within limits, `name` pattern valid, referenced files exist, no oversized `SKILL.md`. Invalid skills never get committed. This is what makes "portable by construction" true.
 
 ### 8.5 Models & BYOK
-- **BYOK is the universal default** — customers already have Anthropic/OpenAI keys.
+- **BYOK is the universal default** — customers already have model keys.
+- **OpenRouter is the managed gateway.** One API fronts Claude + Gemini + GPT, so the managed quota is multi-model and cost-efficient, and BYOK users can bring an OpenRouter key or a native provider key. The engine is model-agnostic behind this adapter.
 - **Paid tiers bundle a capped managed-model quota** (e.g. N generate/improve/playground runs per seat per month) so non-technical users get zero-config authoring without ever touching an API key. Not sold as a standalone model SKU — friction removal priced into the seat. Quota capped to bound cost.
-- Default model: latest Claude (Anthropic API). The engine is model-agnostic behind an adapter.
+- Default model: latest Claude via OpenRouter.
 
 ---
 
@@ -253,13 +260,16 @@ The feature that makes the product usable by non-writers. Three capabilities, al
 **Load-bearing decisions**
 
 1. **Git repo = source of truth; Supabase Postgres = metadata only.** Everything exportable, no lock-in, and the marketplace endpoint is trivial (serve files at the published ref). The DB is a rebuildable index over the repos.
-2. **Git does not run on Vercel.** Serverless = no persistent filesystem, so the git engine lives behind an API. **Start with a git host's API (GitHub/Gitea)** — versioning, diffs, history, a cloneable remote, zero git-ops. Move to a **small self-hosted Gitea box** only if branded `git@altr.run:…` clone URLs become a launch requirement.
+2. **Git does not run on Vercel**, and Altr supports two git backends per library:
+   - **Altr-hosted (default)** — for non-technical teams with no GitHub. A git host's API (GitHub org repos or a small Gitea) provides versioning, diffs, history, and a cloneable remote with zero git-ops for the user.
+   - **Connect your own** — GitHub / GitLab / Bitbucket. Teams already living in a git host link an existing repo; Altr reads/writes via the provider API (OAuth app). Maximum no-lock-in, and Altr hosts nothing.
+   Either way the git repo is the source of truth and the serve layer reads published files from it.
 3. **Auth = Auth.js, sole system**, using the **Supabase Postgres adapter** (one database). Google OAuth + email magic links (email provider e.g. Resend). Accepted consequence: no Supabase RLS `auth.uid()`, so **authorization is enforced in the server layer** — fine because all git/sync/marketplace paths run server-side anyway (§13).
 4. **Sync is pull-only, manifest-based.** Agent polls `/sync/:lib` (content-hash manifest), pulls changed files into per-tool directories. No websockets, no push infra in v1; 60s poll is plenty.
 5. **Claude Code needs no agent at all** — library doubles as a plugin-marketplace URL. Cheapest, most native integration; the demo that sells the product.
 6. **Spec compliance enforced at the boundary** (AI-gen validated + editor validation + git commit hook) → portable by construction.
 
-**Stack:** Next.js (Vercel) web+API · Supabase (Postgres metadata + Storage) · Auth.js w/ Supabase adapter (Google + magic links via email provider) · git backend = GitHub/Gitea API (→ small Gitea box if vanity remotes needed) · sync agent in Go (single static binary, notarized) · Anthropic API for authoring + playground · Stripe for billing.
+**Stack:** Next.js (Vercel) web+API · Supabase (Postgres metadata + Storage) · Auth.js w/ Supabase adapter (Google + magic links via email provider) · git backend = Altr-hosted (GitHub org / Gitea) **or** connected GitHub/GitLab/Bitbucket via provider API · sync agent in Go (single static binary, notarized) · **OpenRouter** for AI-authoring + playground · Stripe for billing.
 
 ---
 
@@ -344,7 +354,7 @@ All write operations go through authenticated server actions in the Next.js app 
 - **Auth.js as the sole auth system**, Supabase Postgres adapter, Google OAuth + email magic links.
 - **No Supabase Auth** running alongside (one system only).
 - **Authorization lives in the server layer.** Because Auth.js doesn't populate Supabase's `auth.uid()`, RLS isn't the guard. Every route handler / server action checks the session's user → `memberships.role` before acting. All sensitive paths (git commits, publish, sync-target config, billing) are server-side, so this is the natural boundary, not a workaround.
-- **Roles:** Admin (manage team, billing, roles, approvals), Editor (create/edit/publish or request review), Viewer (read + consume).
+- **Roles:** Admin (manage team, billing, roles, approvals), Editor (create/edit/publish or request review), Viewer (read + consume). **Skill Curator** (v2) is a marketplace-level role for reviewing/featuring community submissions, separate from team roles.
 - **Device tokens** for CLI and sync agent, scoped to a library + role, revocable.
 
 ---
@@ -386,6 +396,7 @@ All write operations go through authenticated server actions in the Next.js app 
 
 ## 17. Go-to-market & growth
 
+0. **Start content NOW (this week, parallel to build):** a **blog + socials** teaching *"how to write awesome skills"* — quick-to-prompt guides, skill teardowns, the standard explained. This is top-of-funnel, SEO surface, and cheap demand validation in one, and it seeds the audience before the product ships. Personal account for socials. (Board: "Start the blog now!")
 1. **Pre-build validation (2 weeks, before serious code):** 15 interviews with bridge-team-shaped teams; landing page + waitlist. **Gate: 100 signups or 5 "we'd pay" commitments** before building the sync agent. *(Research inferred the gap from competitor absence, not demonstrated demand — non-optional.)*
 2. **Wedge demo (60s):** Maya edits a skill in the browser → Dev's Claude Code picks it up next session → same skill lands in Cursor. The cross-vendor moment is the whole pitch.
 3. **Channels:** Claude Code / Cursor communities; "awesome-claude-skills" lists (one-click import of any public skills repo — instant utility + per-repo SEO surface); dev-Twitter/X launch; Product Hunt.
