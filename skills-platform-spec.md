@@ -80,18 +80,28 @@ Target customer: teams of 5–50 where engineers use agentic coding tools AND no
 
 ## 5. Feature scope
 
-### MVP (build in ~6–8 weeks, then charge)
-- Library + skill CRUD via web form/editor with spec validation
+**AI-authoring is the core interaction, not a garnish.** Nobody in the non-technical audience hand-writes YAML + markdown. The primary way skills come into being is: *describe intent in plain language → Altr generates a spec-compliant skill; select an existing skill → "improve / tighten / add an edge case."* This is the hook that makes the product usable by non-writers, and it's what the models are for.
+
+### Phase v0 — no web app (validate the loop cheaply)
+Ship AI-authoring + sync **inside the tools people already use**, so there's near-zero frontend to build:
+- **Meta-skill + MCP server** — in Claude Code or Claude.ai the user says *"make me a skill that does X"* → Altr generates the skill, commits it to their git-backed library, syncs it out. "The skill that writes skills" (Altr dogfoods itself).
+- Git-backed versioning behind the scenes; management via `altr` CLI + the git host's own web view.
+- Claude Code marketplace endpoint (library = plugin-marketplace URL).
+- **Goal:** prove create → version → sync with engineers/early adopters before building any dashboard.
+
+### Phase v1 — the web app platform (serve the non-technical buyer)
+The dashboard is what a chat box can't do — this is where Maya lives:
+- **AI-generate panel** (same authoring engine as v0) + rich markdown editor with live preview and spec validation
 - Git-backed versioning: history list, prose diff, one-click restore
-- Import: GitHub repo scan, folder upload, raw-prompt scaffold
-- Sync: Claude Code marketplace endpoint + macOS sync agent (Cursor, Codex, Claude Code local) + zip/text export
-- Draft/publish, roles (Admin/Editor/Viewer), email invites, Google SSO
-- Skill playground (test against Claude API)
+- Import: GitHub repo scan, folder upload, raw-prompt → AI-scaffold
+- Sync: marketplace endpoint + macOS sync agent (Cursor, Codex, Claude Code local) + Claude.ai/ChatGPT export
+- Library/skill management, teams, roles (Admin/Editor/Viewer), email invites, auth
+- Skill playground (test against a model)
 - Free/Team billing (Stripe)
 
 ### V1.1 (fast follows)
 - Approval workflow; activity feed; pull-count analytics
-- Windows/Linux sync agent; `altr` CLI for CI
+- Windows/Linux sync agent; `altr` CLI in CI
 - Public/unlisted skill sharing links (growth loop)
 - AGENTS.md export
 
@@ -107,52 +117,57 @@ Target customer: teams of 5–50 where engineers use agentic coding tools AND no
 ## 6. Architecture
 
 ```
-┌────────────── Web app (Next.js) ──────────────┐
-│  Editor · History/Diff · Playground · Admin   │
-└───────────────┬───────────────────────────────┘
-                │ REST/tRPC
-┌───────────────▼───────────────────────────────┐
-│  API server (Node/TS)                         │
-│  · Auth (Google SSO, magic links)             │
-│  · Skill service — validate, commit, publish  │
-│  · Postgres: users, teams, libraries, roles,  │
-│    billing, sync-state (metadata only)        │
-└──────┬──────────────────┬─────────────────────┘
-       │                  │
-┌──────▼───────┐   ┌──────▼──────────────────────┐
-│ Git service  │   │ Serve layer                 │
-│ bare repos,  │   │ · /marketplace/:lib →       │
-│ 1 per library│   │   Claude Code plugin        │
-│ (fs + git,   │   │   marketplace JSON + files  │
-│ SSH+HTTPS)   │   │ · /sync/:lib → manifest for │
-└──────────────┘   │   sync agents (ETag/hash)   │
-                   └─────────────┬───────────────┘
-                                 │ HTTPS pull
-                   ┌─────────────▼───────────────┐
-                   │ Sync agent (Go, menu bar)   │
-                   │ tool detection → writes to  │
-                   │ ~/.cursor/skills, ~/.codex/…│
-                   └─────────────────────────────┘
+┌──────── Web app + API (Next.js on Vercel) ─────────┐
+│  AI-generate · Editor · History/Diff · Playground  │
+│  · Admin — server actions / route handlers         │
+│  · Auth.js (Google OAuth + email magic links)      │
+│  · Skill service — validate, commit, publish       │
+│  · Authz enforced in server layer (no RLS reliance)│
+└──────┬────────────────┬──────────────┬─────────────┘
+       │                │              │
+┌──────▼──────┐  ┌──────▼──────┐  ┌────▼──────────────┐
+│  Supabase   │  │ Git backend │  │ Serve layer       │
+│  Postgres — │  │ 1 repo/lib  │  │ · /marketplace/:  │
+│  metadata + │  │ GitHub-API  │  │   lib → Claude    │
+│  Auth.js    │  │ OR small    │  │   Code plugin mkt │
+│  adapter    │  │ Gitea box   │  │ · /sync/:lib →    │
+│  tables;    │  │ (cloneable  │  │   hash manifest   │
+│  Storage    │  │  remote)    │  └────┬──────────────┘
+│  for assets │  └─────────────┘       │ HTTPS pull
+└─────────────┘                 ┌──────▼──────────────┐
+                                │ Sync agent (Go,     │
+                                │ menu bar) → writes  │
+                                │ ~/.cursor/skills,   │
+                                │ ~/.codex/skills, …  │
+    ┌──────────────────────┐   └─────────────────────┘
+    │ Meta-skill + MCP      │──→ same Skill service (v0 authoring,
+    │ (v0: author in-tool)  │     no web app required)
+    └──────────────────────┘
 ```
 
 **Load-bearing decisions**
 
-1. **The Git repo is the source of truth; Postgres holds only metadata.** This keeps us honest (everything exportable, no lock-in — a trust requirement for the dev persona) and makes the marketplace endpoint trivial (serve files from the repo at the published ref).
-2. **Web saves are commits** authored as the user, via server-side `git` on bare repos (plain `git` CLI on the server; no libgit2 complexity until scale demands it). Publish = move the `published` ref.
-3. **Sync is pull-only, manifest-based**: agent polls `/sync/:lib` (content-hash manifest), downloads changed files, writes into per-tool directories. No websockets, no push infra in v1; 60s poll is fine for this use case.
-4. **Claude Code needs no agent at all** — a library doubles as a plugin-marketplace URL. This is the cheapest, most native integration and the demo that sells the product.
-5. **Spec compliance enforced at the boundary** (web form validation + Git push hook), so every stored skill is portable by construction.
+1. **The Git repo is the source of truth; Supabase Postgres holds only metadata.** Everything is exportable, no lock-in (a trust requirement for the dev persona), and the marketplace endpoint is trivial (serve files at the published ref).
+2. **Git does not run on Vercel.** Next.js on Vercel is serverless — no persistent filesystem — so the git engine lives behind an API the app calls. Start with a **git host's API (GitHub/Gitea) as the backend** (versioning, diffs, history, a cloneable remote — zero git-ops). Move to a **small self-hosted Gitea box** only if branded `git clone git@altr.run:…` URLs become a launch requirement.
+3. **Auth = Auth.js, sole system** (no Supabase Auth alongside it), using the **Supabase Postgres adapter** — auth tables live in the same Supabase, one database. Google OAuth + email magic links (email provider e.g. Resend). Consequence, accepted: no Supabase RLS `auth.uid()`, so **authorization is enforced in the server layer** (route handlers / server actions with the service-role key + role checks) — fine because all git/sync/marketplace paths run server-side anyway.
+4. **Sync is pull-only, manifest-based**: agent polls `/sync/:lib` (content-hash manifest), pulls changed files into per-tool directories. No websockets, no push infra in v1; 60s poll is plenty.
+5. **Claude Code needs no agent at all** — a library doubles as a plugin-marketplace URL. Cheapest, most native integration and the demo that sells the product.
+6. **Spec compliance enforced at the boundary** (AI-gen output validated + editor validation + git commit hook), so every stored skill is portable by construction.
 
-**Stack:** Next.js + tRPC + Postgres (managed, e.g. Neon/RDS) + S3 for large assets + plain git on a persistent volume; sync agent in Go (single static binary, easy notarization). Anthropic API for the playground. Stripe for billing. All boring on purpose.
+**Stack:** **Next.js (Vercel)** for web app + API (server actions / route handlers) · **Supabase** (Postgres metadata + Storage for assets) · **Auth.js** with the Supabase Postgres adapter (Google OAuth + magic links via an email provider) · **git backend** = GitHub/Gitea API (→ small Gitea box if vanity remotes needed) · **sync agent** in Go (single static binary, easy notarization) · **Anthropic API** for AI-authoring + playground · **Stripe** for billing. Boring on purpose.
 
-**Security:** libraries private by default; repo access via per-user SSH keys/HTTPS tokens scoped to role; sync agent auths with a device token; skills can contain scripts → render-only in web (never execute server-side except the playground, which runs instructions through the model, not scripts); secrets scanning on commit (skills are shared artifacts — block accidental API-key commits).
+**Models / BYOK:** BYOK is the universal default (customers already have keys); paid tiers bundle a **capped managed-model quota** so non-technical users get zero-config AI-authoring + playground without ever touching an API key. Not sold as a standalone model SKU — it's friction removal priced into the seat.
+
+**Security:** libraries private by default; git backend access scoped per-user/role; sync agent auths with a device token; skills can contain scripts → render-only in web (never execute server-side; the playground runs instructions through the model, not scripts); secrets scanning on commit (block accidental API-key commits into shared skills).
 
 ---
 
-## 7. Data model (Postgres — metadata only)
+## 7. Data model (Supabase Postgres — metadata only)
+
+> Plus the Auth.js adapter tables (`users`, `accounts`, `sessions`, `verification_tokens`) in the same database. The `users` table below is the Auth.js users table, extended with app columns.
 
 ```
-users(id, email, name, auth_provider)
+users(id, email, name)                          -- Auth.js adapter table
 teams(id, name, plan, stripe_customer_id)
 memberships(user_id, team_id, role: admin|editor|viewer)
 libraries(id, team_id, slug, git_repo_path, visibility)
@@ -203,20 +218,29 @@ Rationale: PromptHub anchors the category at $15–20/user/mo; we undercut sligh
 
 ---
 
-## 11. Build plan (solo/duo, ~8 weeks to paid MVP)
+## 11. Build plan (solo/duo)
 
+### Phase v0 — MCP/skill, no web app (~2–3 weeks, validate the loop)
+| Step | Deliverable |
+|---|---|
+| 1 | Git backend wired (GitHub/Gitea API): 1 repo/library, commit-as-user, spec validation on write |
+| 2 | AI-authoring engine (Anthropic API): plain-language intent → spec-compliant SKILL.md; improve/enhance an existing skill |
+| 3 | Meta-skill + MCP server ("make me a skill…" in Claude Code/Claude.ai → commits + syncs); `altr` CLI |
+| 4 | Claude Code marketplace endpoint (library = plugin-marketplace URL) — **first demoable moment** |
+
+→ Ship to 10–15 design partners. Gate: does the create → version → sync loop hold before building a dashboard?
+
+### Phase v1 — web app platform (~6 weeks, serve the buyer)
 | Week | Deliverable |
 |---|---|
-| 1 | Repo/infra scaffold; Git service (bare repos, commit-as-user, push-hook validation); data model |
-| 2 | Skill editor + spec validation + history/restore |
-| 3 | Claude Code marketplace endpoint (E2E: edit in web → appears in Claude Code) — **first demoable moment** |
-| 4 | Import (repo scan, upload, prompt scaffold); prose diff view |
-| 5 | Sync agent v0 (macOS: Cursor + Codex + Claude Code local) |
-| 6 | Teams, roles, invites, draft/publish |
-| 7 | Playground; Claude.ai/ChatGPT export helpers; polish |
-| 8 | Billing, landing page, docs; private beta with 10 waitlist teams |
+| 1 | Next.js + Supabase + Auth.js scaffold (Google + magic link); server-layer authz; data model |
+| 2 | AI-generate panel + editor + spec validation + history/restore (prose diff) |
+| 3 | Marketplace endpoint in-app + import (repo scan, upload, raw-prompt → AI-scaffold) |
+| 4 | Sync agent (macOS: Cursor + Codex + Claude Code local); Claude.ai/ChatGPT export helpers |
+| 5 | Teams, roles, invites, draft/publish; playground |
+| 6 | Billing (Stripe), landing page, docs; private beta with waitlist teams |
 
-Risk-ordered: the Git+marketplace spine (weeks 1–3) is the novel part; everything after is standard SaaS.
+Risk-ordered: v0's AI-authoring + git + marketplace spine is the novel part; the v1 web app is standard Next.js/Supabase SaaS on top of a proven core.
 
 ---
 

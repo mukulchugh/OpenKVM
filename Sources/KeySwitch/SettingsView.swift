@@ -14,8 +14,8 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Keyboard") {
-                Toggle("This Mac has the physical keyboard", isOn: Binding(
+            Section("Keyboard & mouse") {
+                Toggle("This Mac has the keyboard & mouse", isOn: Binding(
                     get: { configStore.config.isKeyboardOwner },
                     set: { newValue in
                         configStore.config.isKeyboardOwner = newValue
@@ -24,7 +24,7 @@ struct SettingsView: View {
                 ))
 
                 if configStore.config.isKeyboardOwner && !bridge.canCapture {
-                    Label("KeySwitch needs Accessibility AND Input Monitoring to capture keystrokes.", systemImage: "exclamationmark.triangle.fill")
+                    Label("KeySwitch needs Accessibility AND Input Monitoring to capture the keyboard & mouse.", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                     HStack {
                         Button("Request access") { bridge.requestPermissions() }
@@ -33,7 +33,7 @@ struct SettingsView: View {
                     }
                 }
                 if !configStore.config.isKeyboardOwner && !bridge.canPost {
-                    Label("KeySwitch needs permission to type incoming keystrokes on this Mac.", systemImage: "exclamationmark.triangle.fill")
+                    Label("KeySwitch needs permission to control this Mac (type and move the pointer).", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                     HStack {
                         Button("Request access") { bridge.requestPermissions() }
@@ -43,7 +43,7 @@ struct SettingsView: View {
 
                 if configStore.config.isKeyboardOwner && bridge.canCapture && isPaired {
                     HStack {
-                        Button(bridge.isForwarding ? "Bring keyboard back here" : "Send keyboard to \(peerDisplayName)") {
+                        Button(bridge.isForwarding ? "Take control back" : "Control \(peerDisplayName)") {
                             Task { await bridge.toggleForwarding() }
                         }
                         Text("or press \(InputBridge.hotkeyDisplay) anytime")
@@ -53,7 +53,7 @@ struct SettingsView: View {
                 }
 
                 if bridge.isReceivingFromPeer {
-                    Label("Receiving keyboard from \(peerDisplayName)", systemImage: "keyboard.badge.ellipsis")
+                    Label("Receiving keyboard & mouse from \(peerDisplayName)", systemImage: "keyboard.badge.ellipsis")
                         .foregroundStyle(.green)
                 }
             }
@@ -73,7 +73,7 @@ struct SettingsView: View {
                     }
                     if let peer = network.peerSetupStatus {
                         if peer.isKeyboardOwner && configStore.config.isKeyboardOwner {
-                            Label("Both Macs claim the keyboard — turn OFF the toggle on \(peer.hostName).", systemImage: "exclamationmark.triangle.fill")
+                            Label("Both Macs claim input — turn OFF the toggle on \(peer.hostName).", systemImage: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
                         }
                         if configStore.config.isKeyboardOwner && peer.canPost == false {

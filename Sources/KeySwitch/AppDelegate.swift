@@ -48,12 +48,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let statusText: String
         if bridge.isReceivingFromPeer {
-            statusText = "Receiving keyboard from peer"
+            statusText = "Receiving keyboard & mouse from peer"
         } else if bridge.isForwarding {
             let peer = configStore.config.peerHostName.isEmpty ? "other Mac" : configStore.config.peerHostName
-            statusText = "Forwarding keyboard to \(peer)"
+            statusText = "Controlling \(peer)"
         } else if configStore.config.isKeyboardOwner {
-            statusText = "Keyboard is local"
+            statusText = "Keyboard & mouse are local"
         } else {
             statusText = "Receive-only Mac"
         }
@@ -70,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(disabled("→ Grant permissions in Settings"))
         } else if configStore.config.isKeyboardOwner {
             let toggle = NSMenuItem(
-                title: bridge.isForwarding ? "Switch keyboard back to this Mac" : "Switch keyboard to other Mac",
+                title: bridge.isForwarding ? "Take control back to this Mac" : "Control other Mac (keyboard & mouse)",
                 action: #selector(toggleForwarding),
                 keyEquivalent: "k"
             )
@@ -82,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 menu.addItem(disabled("→ Pair with your other Mac in Settings"))
             }
         } else {
-            menu.addItem(disabled("→ Enable “This Mac has the keyboard” on the owner Mac"))
+            menu.addItem(disabled("→ Enable “This Mac has the keyboard & mouse” on the owner Mac"))
         }
 
         menu.addItem(.separator())

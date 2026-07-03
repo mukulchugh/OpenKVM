@@ -1,12 +1,23 @@
 # KeySwitch
 
-macOS menu bar app to switch a Bluetooth keyboard between two Macs with one click.
+macOS menu bar app that forwards a physical keyboard and mouse from one Mac to another over the local network.
+
+The Mac with the hardware attached captures keystrokes and pointer events, sends them to your other Mac over TCP, and replays them there. Toggle control with **⌘⇧K** or the menu bar — the hotkey always works locally so you are never locked out.
 
 ## Requirements
 
 - macOS 13+
 - Xcode Command Line Tools (`swift`, `xcodebuild`)
-- Keyboard paired to **both** Macs in System Settings → Bluetooth
+- Both Macs on the same local network (or reachable by IP)
+- KeySwitch installed and running on **both** Macs
+
+## Quick start
+
+1. Build or install KeySwitch on both Macs (see [Install](#install)).
+2. On the Mac **with the keyboard**, open **Settings** and enable **This Mac has the physical keyboard**.
+3. On either Mac, open **Settings → Other Mac** and click **Pair** next to the discovered peer. Approve the dialog on the other Mac.
+4. Grant **Accessibility**, **Input Monitoring**, and **Local Network** when prompted.
+5. Press **⌘⇧K** (or use the menu) to forward the keyboard to the other Mac. Press again to bring it back.
 
 ## Build
 
@@ -14,7 +25,14 @@ macOS menu bar app to switch a Bluetooth keyboard between two Macs with one clic
 ./build-app.sh
 ```
 
-Output: `dist/KeySwitch.app`
+Output: `dist/KeySwitch.app` (universal arm64 + x86_64)
+
+For a stable code signature so Accessibility permission survives rebuilds:
+
+```bash
+./scripts/make-signing-cert.sh   # once per Mac
+./build-app.sh
+```
 
 ### DMG installer
 
@@ -24,7 +42,8 @@ chmod +x build-dmg.sh
 ```
 
 Output:
-- `dist/KeySwitch.zip` — **use this on your other Mac** (avoids false "damaged" errors)
+
+- `dist/KeySwitch.zip` — **preferred for your other Mac** (avoids false "damaged" errors)
 - `dist/KeySwitch.dmg` — drag-to-Applications installer
 
 ## Install
@@ -59,24 +78,64 @@ Open `dist/KeySwitch.dmg`, drag KeySwitch to Applications.
 cp -R dist/KeySwitch.app /Applications/
 ```
 
-First launch: right-click → Open (unsigned build). Grant **Bluetooth** and **Local Network** permissions.
+First launch: right-click → Open (unsigned build). Grant **Accessibility**, **Input Monitoring**, **Post Event** (on the receiver), and **Local Network** permissions.
 
 ## Setup (both Macs)
 
-1. Install KeySwitch on both machines.
-2. Open **Settings** from the menu bar icon.
-3. Select your keyboard.
-4. Set the same **pairing token** on both Macs.
-5. Set the other Mac's Bonjour name (click a discovered peer) or IP address.
-6. Use **Test connection** to verify.
+| Mac | Settings |
+|-----|----------|
+| **Owner** (has keyboard) | Enable "This Mac has the physical keyboard" |
+| **Receiver** (other Mac) | Leave that toggle **off** |
+
+Pairing (automatic):
+
+1. Open **Settings** on either Mac.
+2. Wait for the other Mac to appear under **Other Mac**.
+3. Click **Pair**, then click **Approve** on the other Mac.
+
+Manual (if Bonjour discovery fails): open **Advanced**, set the other Mac's IP and ensure both Macs share the same pairing token.
+
+Use **Test connection** (Advanced) to verify reachability.
 
 ## Usage
 
-- **Switch keyboard to [Other Mac]** — disconnect here, connect on peer
-- **Switch keyboard to [This Mac]** — pull keyboard back
+| Action | How |
+|--------|-----|
+| Forward keyboard & mouse to other Mac | Menu bar → "Switch keyboard to other Mac", or **⌘⇧K** |
+| Bring keyboard back to this Mac | Menu bar → "Switch keyboard back to this Mac", or **⌘⇧K** |
+| Open settings | Menu bar → Settings…, or **⌘,** |
+| Recover stale permissions / network | Menu bar → Refresh, or **⌘R** |
 
 ## Architecture
 
-- **IOBluetooth** — connect/disconnect peripherals
-- **Network.framework** — TCP commands between Macs
-- **Bonjour** — `_keyswitch._tcp` peer discovery
+| Component | Role |
+|-----------|------|
+| **InputBridge** | CGEvent tap (capture) and CGEvent injection (replay) |
+| **PeerNetwork** | TCP listener, Bonjour discovery (`_keyswitch._tcp`), wire protocol |
+| **ConfigStore** | Persists pairing token, peer, owner flag in UserDefaults |
+| **SettingsView** | SwiftUI settings: pairing, permissions, diagnostics |
+
+Default TCP port: **9847**. Messages are length-prefixed JSON.
+
+For the full technical reference — data flows, wire protocol, TCC permissions, build pipeline, and debugging — see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+
+## Development
+
+```bash
+# Run from source (debug)
+swift run
+
+# Test peer connectivity (app must be running)
+python3 scripts/test-peer-ping.py 127.0.0.1 9847 <your-token>
+python3 scripts/test-peer-setup.py 127.0.0.1 9847 <your-token>
+```
+
+## Project structure
+
+```
+Sources/KeySwitch/     Application source (7 Swift files)
+Resources/             Info.plist, app icon
+scripts/               Installer, signing cert, test clients
+build-app.sh           Universal .app packaging
+build-dmg.sh           DMG + ZIP distribution
+```
